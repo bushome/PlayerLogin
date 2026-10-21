@@ -158,7 +158,7 @@ namespace
 	{
 		const std::time_t t = std::time(nullptr);
 		std::tm lt{};
-		localtime_s(&lt, &t);
+		gmtime_s(&lt, &t); // UTC regardless of the machine's time zone
 		char buf[32];
 		std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &lt);
 		return buf;
@@ -168,7 +168,7 @@ namespace
 	{
 		const std::time_t t = static_cast<std::time_t>(unix_seconds);
 		std::tm lt{};
-		localtime_s(&lt, &t);
+		gmtime_s(&lt, &t); // UTC regardless of the machine's time zone
 		char buf[32];
 		std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &lt);
 		return buf;
@@ -178,6 +178,36 @@ namespace
 	{
 		const long long s = std::chrono::duration_cast<std::chrono::seconds>(d).count();
 		return std::to_string(s / 3600) + "h " + std::to_string((s / 60) % 60) + "m " + std::to_string(s % 60) + "s";
+	}
+
+	// Label for the account-name line, from the platform the client connected with
+	// (UNetConnection.PlayerOnlinePlatformName). Unrecognised values are shown raw so they can be mapped later.
+	std::string AccountLabel(AShooterPlayerController* pc)
+	{
+		std::string raw;
+		if (pc)
+		{
+			if (UNetConnection* conn = pc->GetNetConnection())
+				raw = ToStd(conn->PlayerOnlinePlatformNameField().ToString());
+		}
+		std::string up = raw;
+		for (auto& c : up)
+			c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+
+		if (up.empty() || up == "NONE")
+			return "Account Name";
+		if (up.find("STEAM") != std::string::npos)
+			return "Steam Name";
+		if (up.find("XBL") != std::string::npos || up.find("XBOX") != std::string::npos
+			|| up.find("GDK") != std::string::npos || up.find("LIVE") != std::string::npos)
+			return "Xbox Name";
+		if (up.find("PS4") != std::string::npos || up.find("PS5") != std::string::npos
+			|| up.find("PSN") != std::string::npos || up.find("PLAYSTATION") != std::string::npos
+			|| up.find("SONY") != std::string::npos)
+			return "PSN Name";
+		if (up.find("EOS") != std::string::npos || up.find("EPIC") != std::string::npos)
+			return "Epic Name";
+		return "Account Name (" + raw + ")";
 	}
 
 	// One Discord event block for an online player. Safe to call while the controller is valid.
@@ -201,7 +231,7 @@ namespace
 		std::string out = "[Event] " + event + "\n[Server] " + g_server_key
 			+ "\n[Player] " + (character.empty() ? "(no character)" : character)
 			+ (pid ? " (" + std::to_string(pid) + ")" : "")
-			+ "\n[Platform] " + (platform.empty() ? "?" : platform)
+			+ "\n[" + AccountLabel(pc) + "] " + (platform.empty() ? "?" : platform)
 			+ "\n[EOS] " + eos;
 		if (!tribe.empty())
 			out += "\n[Tribe] " + tribe;

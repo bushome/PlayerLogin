@@ -3,6 +3,9 @@
 One character per player across the cluster, duplicate prevention, bans and LastSeen lookups,
 backed by MariaDB. Replaces the parts of Lethal Login this cluster uses.
 
+**Status: complete, in production on the ASA cluster.** Every feature below was tested on a test server and on live
+(see [Verified](#verified)). The ASE port lives in `ASE/` with its own README.
+
 ## Install
 
 1. Create the database and a user (the plugin creates its tables itself):
@@ -57,7 +60,12 @@ Several fields can share one URL.
 Events are queued and each channel posts at most once every 2 s, combining whatever has queued into one message,
 so restarts and busy periods stay under Discord's rate limit. Posting runs on AsaApi's request threads, never the
 game thread. If Discord is down, failures are logged and the messages are discarded; a channel holds at most 200
-pending events. Timestamps are the server's local time; mentions in names are never pinged.
+pending events. Timestamps are always UTC, whatever time zone the server machine is set to; mentions in names are never pinged.
+
+Player posts carry the character name with PlayerId, the account name, EOS ID and tribe. The account-name label
+follows the platform the player connected from: `[Steam Name]`, `[Xbox Name]`, `[PSN Name]`, `[Epic Name]`, or
+`[Account Name]` when the platform isn't reported (e.g. Left posts after the connection has closed). An unrecognised
+platform shows as `[Account Name (<raw value>)]` so it can be added to `AccountLabel()`.
 
 ## Behavior
 
@@ -93,8 +101,10 @@ so a login racing the check wins. Each removal is written to `verification_log` 
 Safety: verification is skipped entirely if the profile folder has no `.arkprofile` files
 (wrong path, mid-restore), and removes at most `MaxRemovalsPerRun` rows per pass.
 
-`StaleEntryDays` (0 = off): a record untouched for that many days stops locking the player,
-e.g. records pointing at a retired server.
+`StaleEntryDays` (0 = off): a record untouched for that many days stops locking the player.
+Leave it at 0: a returning player could otherwise create a second character while the old one still exists.
+Reset returning players by hand (`playerlogin.reset`), and when retiring a map clear its rows in one go:
+`DELETE FROM characters WHERE server_key='OldMap';`
 
 ## Build
 
@@ -117,18 +127,22 @@ To build against a newer AsaApi: `cd ASA/AsaApi && git pull`, rebuild it, then c
 - Don't define `WIN32_LEAN_AND_MEAN`; AsaApi's `Base.h` already does.
 - Include dirs: `AsaApi/AsaApi/Core/Public` and `AsaApi/AsaApi/Core/Public/API/UE`; link `AsaApi.lib` from `AsaApi/x64/Release`.
 
-## Test checklist (dedicated test server, two maps in a test cluster)
+## Verified
 
-Things that depend on game behavior I couldn't run here, in order of importance:
+Tested on a dedicated test server, then on the live cluster:
 
-1. **New vs. existing player detection.** Brand-new EOS ID logs in: log must *not* show a backfill line until the
-   character is created. Existing character logs in with no row: log shows `recorded on <key> (backfill on login)`.
-   This relies on `HandleNewPlayer`'s player-data argument being null for players with no profile on the map.
-2. **Creation block.** Player recorded on map A tries to create on map B: notification shown, they stay on the
-   creation/download screen (not stuck on a loading spinner).
-3. **Transfer.** Upload on A → row shows `in_transit=1`. Download on B → row moves to B within ~5 s, `in_transit=0`.
-4. **Duplicate.** Copy a player's `.arkprofile` onto map B while their row says A → login on B kicks with the duplicate message.
-5. **Profile path.** Confirm the startup log path, then delete a test profile, wait past grace, and confirm
-   the `verification_log` entry.
-6. **Bans.** Timed and permanent, RCON and console; ban a player online on the *other* map and confirm the kick within 60 s.
-7. **LastSeen** from the crosschat bot's RCON connection.
+| Area | Result |
+|---|---|
+| Startup: server key, profile path, database connection | Pass |
+| Backfill on login (fresh table and after reset) | Pass |
+| Duplicate login: never spawns, dialog with reason, OK returns to main menu | Pass |
+| Blocked creation: returned to the creation screen with the "last seen on X" dialog; download screen never forced | Pass |
+| Timed and permanent bans, unban, kick on ban while online | Pass |
+| `LastSeen` over RCON, including the crosschat bot's Last Login button | Pass |
+| `reset` | Pass |
+| Exclusions | Pass |
+| Verification (startup delay, grace, removal, `verification_log`, Discord post) | Pass |
+| Live obelisk transfers: one upload post, one arrival post, record moves (ItemsPlus double upload call handled) | Pass |
+| Discord: joined / left / created / transfers / duplicates / moderation | Pass |
+
+Replaced on this cluster: Lethal Login.
