@@ -1,0 +1,26 @@
+{
+  "Mysql": {
+    "Host": "127.0.0.1",
+    "Port": 3306,
+    "User": "playerlogin",
+    "Password": "change-me",
+    "Database": "playerlogin"
+  },
+  "ServerKeyOverride": "",
+  "Verification": {
+    "Enabled": true,
+    "StartupDelayMinutes": 30,
+    "IntervalMinutes": 30,
+    "GraceMinutes": 60,
+    "StaleEntryDays": 0,
+    "MaxRemovalsPerRun": 25,
+    "ProfileDirectory": ""
+  },
+  "Messages": {
+    "CreationBlocked": "Your character was last seen on {server}. Log in there to play it.",
+    "DuplicateLogin": "Your character is registered on {server}. You can only log in with it there.",
+    "BannedPermanent": "You are banned from this cluster. Reason: {reason}",
+    "BannedTimed": "You are banned until {expires} UTC. Reason: {reason}",
+    "RecordLoading": "Checking your character record. Try again in a moment."
+  }
+}
