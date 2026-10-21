@@ -2,7 +2,7 @@
 // Thin MariaDB Connector/C wrapper plus a single background worker thread.
 // Every query in the plugin runs on the worker; hooks only queue jobs.
 
-#include <mysql.h>
+#include <mysql/mysql.h> // vcpkg libmariadb installs headers under include/mysql
 
 #include <condition_variable>
 #include <cstring>
@@ -23,6 +23,7 @@ namespace PlayerLogin
 		std::string user;
 		std::string password;
 		std::string database;
+		bool ssl = false; // false: plain connection (local / LAN MariaDB without TLS)
 	};
 
 	using DbRow = std::vector<std::optional<std::string>>;
@@ -53,6 +54,14 @@ namespace PlayerLogin
 			mysql_options(conn_, MYSQL_OPT_READ_TIMEOUT, &timeout);
 			mysql_options(conn_, MYSQL_OPT_WRITE_TIMEOUT, &timeout);
 			mysql_options(conn_, MYSQL_SET_CHARSET_NAME, "utf8mb4");
+
+			// Connector/C 3.4+ requires TLS and verifies the server certificate by default, which fails
+			// against a MariaDB server without TLS ("SSL is required, but the server does not support it").
+			// Ssl=false: never use TLS. Ssl=true: require TLS but accept a self-signed server certificate.
+			my_bool enforce = cfg_.ssl ? 1 : 0;
+			my_bool verify = 0;
+			mysql_optionsv(conn_, MYSQL_OPT_SSL_ENFORCE, &enforce);
+			mysql_optionsv(conn_, MYSQL_OPT_SSL_VERIFY_SERVER_CERT, &verify);
 
 			if (!mysql_real_connect(conn_, cfg_.host.c_str(), cfg_.user.c_str(), cfg_.password.c_str(),
 				cfg_.database.c_str(), cfg_.port, nullptr, 0))

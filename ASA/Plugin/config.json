@@ -4,7 +4,8 @@
     "Port": 3306,
     "User": "playerlogin",
     "Password": "change-me",
-    "Database": "playerlogin"
+    "Database": "playerlogin",
+    "Ssl": false
   },
   "ServerKeyOverride": "",
   "Verification": {
@@ -15,6 +16,12 @@
     "StaleEntryDays": 0,
     "MaxRemovalsPerRun": 25,
     "ProfileDirectory": ""
+  },
+  "Discord": {
+    "LoginsWebhook": "",
+    "TransfersWebhook": "",
+    "DuplicatesWebhook": "",
+    "ModerationWebhook": ""
   },
   "Messages": {
     "CreationBlocked": "Your character was last seen on {server}. Log in there to play it.",

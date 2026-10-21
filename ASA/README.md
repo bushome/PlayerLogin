@@ -42,16 +42,43 @@ INSERT INTO exclusions (server_key, note) VALUES ('TestingServer', 'admin test b
 On an excluded server there's no map lock, no duplicate kick and nothing gets recorded. Bans still apply.
 Picked up within 60 s; no restart needed.
 
+## Discord logging
+
+Optional. Paste a channel webhook URL into any of the `Discord` fields in `config.json`; leave a field empty to turn that channel off.
+Several fields can share one URL.
+
+| Field | Events |
+|---|---|
+| `LoginsWebhook` | Joined (with whether a character exists here), Left (with session length), New character created |
+| `TransfersWebhook` | Character uploaded, Transfer arrived (from → to) |
+| `DuplicatesWebhook` | Character creation blocked, Duplicate character login blocked, Character record removed by verification |
+| `ModerationWebhook` | Ban, Unban, Character record reset, Banned player kicked |
+
+Events are queued and each channel posts at most once every 2 s, combining whatever has queued into one message,
+so restarts and busy periods stay under Discord's rate limit. Posting runs on AsaApi's request threads, never the
+game thread. If Discord is down, failures are logged and the messages are discarded; a channel holds at most 200
+pending events. Timestamps are the server's local time; mentions in names are never pinged.
+
 ## Behavior
+
+The record is checked at login, before the character spawns (one primary-key query on the game thread).
 
 | Situation on login | Result |
 |---|---|
-| Banned | Kicked with the ban reason |
+| Banned | Never spawns. Held on character creation; a "Login refused" dialog shows the reason and OK returns them to the main menu (server kick ~23 s later if left open) |
 | No record, has character here | Recorded here (backfill) |
 | No record, no character here | Free to create or download; recorded once the character exists |
 | Recorded here | Normal login; record refreshed, in-transit cleared |
-| Recorded elsewhere, has a character here | Duplicate copy: kicked, "registered on X" |
-| Recorded elsewhere, no character here | Can download a transferred character (record moves here); creation blocked, "last seen on X" |
+| Recorded elsewhere, has a character here | Duplicate copy: never spawns. Held on character creation; "Login refused" dialog with "registered on X", OK returns them to the main menu (server kick ~23 s later if left open) |
+| Recorded elsewhere, no character here | Normal flow, no message (they may be arriving by transfer). Downloading a transferred character works (record moves here); creating a character is refused and returns them to the creation screen with the "last seen on X" message |
+
+The plugin never opens the "Download ARK Survivor" screen itself; that only appears through the game's own transfer flow.
+
+ASA's kick drops the client with "lost connection" and no reason, so the reason is always shown first:
+a center-screen dialog (the game's own notification dialog) plus a chat message. Blocked creations get a
+"Character creation blocked" dialog whose OK keeps them on the creation screen. If the database doesn't answer at login,
+the player spawns normally and the record is applied in the background (in-world kick after 4 s;
+uploads are blocked while a kick is pending).
 
 Obelisk upload marks the record in transit. Arrival on any server moves it there.
 
@@ -71,15 +98,24 @@ e.g. records pointing at a retired server.
 
 ## Build
 
-Requires the AsaApi repo (headers) and its Release `AsaApi.lib`, plus vcpkg.
+AsaApi is a git submodule at `ASA/AsaApi`. After cloning this repo:
 ```
-cmake -B build -G "Visual Studio 17 2022" -A x64 ^
-  -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%/scripts/buildsystems/vcpkg.cmake ^
-  -DVCPKG_TARGET_TRIPLET=x64-windows-static-md ^
-  -DASAAPI_DIR=C:/src/AsaApi -DASAAPI_LIB=C:/src/AsaApi/x64/Release/AsaApi.lib
-cmake --build build --config Release
+git submodule update --init --recursive
 ```
-libmariadb is linked statically, so no extra DLLs ship with the plugin.
+1. Build `ASA/AsaApi/AsaApi.sln` as **Release | x64** (produces `ASA/AsaApi/x64/Release/AsaApi.lib`).
+2. Open `ASA/PlayerLogin.sln` in Visual Studio 2026 and build **Release | x64**.
+   vcpkg (manifest mode, `vcpkg.json`) installs libmariadb and fmt on the first build.
+3. Output: `ASA/x64/Release/` holds `PlayerLogin.dll`, `config.json` and `PluginInfo.json`, the whole plugin folder.
+
+To build against a newer AsaApi: `cd ASA/AsaApi && git pull`, rebuild it, then commit the submodule bump.
+
+### Build notes (apply to any AsaApi plugin)
+
+- VS 2026's bundled vcpkg requires `builtin-baseline` in `vcpkg.json`. Use the same baseline as AsaApi's own `vcpkg.json` so shared libraries (fmt) are the same version.
+- Project settings: Character Set = Unicode (AsaApi's UE headers need a 2-byte TCHAR), C++20, `/MD`, vcpkg "Use Static Libraries" + "Use Dynamic CRT" (= `x64-windows-static-md`, so dependencies link into the plugin DLL).
+- AsaApi's `UnrealString.h` includes `<fmt/format.h>`: add `fmt` to `vcpkg.json`.
+- Don't define `WIN32_LEAN_AND_MEAN`; AsaApi's `Base.h` already does.
+- Include dirs: `AsaApi/AsaApi/Core/Public` and `AsaApi/AsaApi/Core/Public/API/UE`; link `AsaApi.lib` from `AsaApi/x64/Release`.
 
 ## Test checklist (dedicated test server, two maps in a test cluster)
 

@@ -22,6 +22,8 @@
 #include <Windows.h>
 
 #include <algorithm>
+#include <chrono>
+#include <ctime>
 #include <atomic>
 #include <cctype>
 #include <filesystem>
@@ -33,6 +35,7 @@
 #include <vector>
 
 #include "Database.h"
+#include "Discord.h"
 
 #pragma comment(lib, "AsaApi.lib")
 
@@ -65,11 +68,20 @@ namespace
 		std::string profile_dir;   // empty = auto
 	};
 
+	struct DiscordConfig
+	{
+		std::string logins;      // join / leave / new character
+		std::string transfers;   // obelisk upload / arrival
+		std::string duplicates;  // blocked creation, duplicate kicks, verification removals
+		std::string moderation;  // ban / unban / reset commands, ban kicks
+	};
+
 	struct Config
 	{
 		DbConfig db;
 		std::string server_key_override;
 		VerifyConfig verify;
+		DiscordConfig discord;
 		Messages msg;
 	};
 
@@ -78,11 +90,21 @@ namespace
 	{
 		bool loaded = false;           // record query has come back
 		bool kicked = false;           // ban or duplicate kick issued; never claim
+		// Pending kick: the reason is shown in-game first, then the player is disconnected.
+		// ASA's kick drops the client with a generic "lost connection" and no reason.
+		std::string kick_msg;
+		bool kick_notified = false;
+		std::chrono::steady_clock::time_point kick_scheduled_at{};
+		std::chrono::steady_clock::time_point kick_notified_at{};
+		bool spawn_blocked = false;            // stopped at login: never entered the world
+		unsigned long long data_player_id = 0; // PlayerDataID from saved data at login (pawn not spawned yet)
+		std::string last_name;                 // last known character name, for "Left" after an upload
 		bool had_data_at_login = false;// a character profile existed on this server when they joined
 		bool has_row = false;
 		std::string row_server;
 		unsigned long long row_player_id = 0;
 		bool row_in_transit = false;
+		std::chrono::steady_clock::time_point joined_at = std::chrono::steady_clock::now();
 	};
 
 	Config g_cfg;
@@ -94,6 +116,7 @@ namespace
 	std::unique_ptr<DbWorker> g_worker;
 	std::unique_ptr<Db> g_cmd_db;     // game-thread connection for admin/RCON commands
 	GameQueue g_game_queue;
+	Discord g_discord;
 	std::unordered_map<std::string, PlayerEntry> g_players; // keyed by lower-case EOS ID
 
 	// -----------------------------------------------------------------------------------------
@@ -130,6 +153,64 @@ namespace
 		return Lower(ToStd(AsaApi::IApiUtils::GetEOSIDFromController(pc)));
 	}
 
+	// Server-local wall clock, for Discord messages.
+	std::string Stamp()
+	{
+		const std::time_t t = std::time(nullptr);
+		std::tm lt{};
+		localtime_s(&lt, &t);
+		char buf[32];
+		std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &lt);
+		return buf;
+	}
+
+	std::string FormatUnix(long long unix_seconds)
+	{
+		const std::time_t t = static_cast<std::time_t>(unix_seconds);
+		std::tm lt{};
+		localtime_s(&lt, &t);
+		char buf[32];
+		std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &lt);
+		return buf;
+	}
+
+	std::string Duration(std::chrono::steady_clock::duration d)
+	{
+		const long long s = std::chrono::duration_cast<std::chrono::seconds>(d).count();
+		return std::to_string(s / 3600) + "h " + std::to_string((s / 60) % 60) + "m " + std::to_string(s % 60) + "s";
+	}
+
+	// One Discord event block for an online player. Safe to call while the controller is valid.
+	// name_hint: character name from saved player data, for events before the pawn has spawned
+	// (at login the controller has no character yet, so the name lookup comes back empty).
+	std::string PlayerEvent(const std::string& event, AShooterPlayerController* pc, const std::string& eos,
+		const std::vector<std::string>& extra = {}, const std::string& name_hint = "")
+	{
+		std::string character = pc ? ToStd(AsaApi::IApiUtils::GetCharacterName(pc)) : "";
+		if (character.empty())
+			character = name_hint;
+		std::string platform, tribe;
+		if (pc)
+		{
+			if (APlayerState* ps = pc->PlayerStateField().Get())
+				platform = ToStd(ps->PlayerNamePrivateField());
+			tribe = ToStd(pc->GetTribeName());
+		}
+		const unsigned long long pid = pc ? AsaApi::IApiUtils::GetPlayerID(pc) : 0;
+
+		std::string out = "[Event] " + event + "\n[Server] " + g_server_key
+			+ "\n[Player] " + (character.empty() ? "(no character)" : character)
+			+ (pid ? " (" + std::to_string(pid) + ")" : "")
+			+ "\n[Platform] " + (platform.empty() ? "?" : platform)
+			+ "\n[EOS] " + eos;
+		if (!tribe.empty())
+			out += "\n[Tribe] " + tribe;
+		for (const auto& line : extra)
+			out += "\n" + line;
+		out += "\n[Timestamp] " + Stamp();
+		return out;
+	}
+
 	unsigned long long ToU64(const std::optional<std::string>& v)
 	{
 		if (!v || v->empty())
@@ -164,6 +245,24 @@ namespace
 		AsaApi::GetApiUtils().SendNotification(pc, FLinearColor(1.0f, 0.35f, 0.35f, 1.0f), 1.3f, 12.0f, nullptr, L"{}", *msg);
 		AsaApi::GetApiUtils().SendServerMessage(pc, FLinearColor(1.0f, 0.35f, 0.35f, 1.0f), L"{}", *msg);
 	}
+
+	// Center-screen popup (the game's own notification dialog), shown with the chat message.
+	// to_main_menu = true: clicking OK takes the player to the main menu, i.e. a kick they can read.
+	void Dialog(AShooterPlayerController* pc, const std::string& title, const std::string& text, bool to_main_menu)
+	{
+		if (!pc)
+			return;
+		const FString f_text = ToF(text);
+		const FString f_title = ToF(title);
+		pc->ClientDisplayNotificationDialog(&f_text, &f_title, /*bIsError*/ to_main_menu, to_main_menu,
+			/*bAutoClose*/ false, /*bCanBeTop*/ true, /*bHideXBoxFooter*/ false);
+	}
+
+	const char* kTitleRefused = "Login refused";
+	const char* kTitleBlocked = "Character creation blocked";
+
+	// Show the reason, then disconnect a few seconds later (see PlayerEntry::kick_msg).
+	void ScheduleKick(const std::string& eos, AShooterPlayerController* pc, const std::string& reason);
 
 	std::string BanMessage(long long expires, const std::string& expires_text, const std::string& reason)
 	{
@@ -238,6 +337,7 @@ namespace
 		g_cfg.db.user = m.value("User", "");
 		g_cfg.db.password = m.value("Password", "");
 		g_cfg.db.database = m.value("Database", "playerlogin");
+		g_cfg.db.ssl = m.value("Ssl", false);
 
 		g_cfg.server_key_override = j.value("ServerKeyOverride", "");
 
@@ -251,6 +351,15 @@ namespace
 			g_cfg.verify.stale_entry_days = std::max(0, v.value("StaleEntryDays", 0));
 			g_cfg.verify.max_removals_per_run = std::max(1, v.value("MaxRemovalsPerRun", 25));
 			g_cfg.verify.profile_dir = v.value("ProfileDirectory", "");
+		}
+
+		if (j.contains("Discord"))
+		{
+			const auto& d = j["Discord"];
+			g_cfg.discord.logins = d.value("LoginsWebhook", "");
+			g_cfg.discord.transfers = d.value("TransfersWebhook", "");
+			g_cfg.discord.duplicates = d.value("DuplicatesWebhook", "");
+			g_cfg.discord.moderation = d.value("ModerationWebhook", "");
 		}
 
 		if (j.contains("Messages"))
@@ -347,22 +456,42 @@ namespace
 	};
 
 	// Game thread: act on a player's record once it has loaded.
-	void OnRecordLoaded(const std::string& eos, const LoginResult& r)
+	// What the login hook should do with a player whose record is known.
+	enum class Gate
 	{
-		auto it = g_players.find(eos);
-		if (it == g_players.end())
-			return; // already logged out
-		PlayerEntry& entry = it->second;
-		AShooterPlayerController* pc = AsaApi::GetApiUtils().FindPlayerFromEOSID(ToF(eos));
-		if (!pc)
-			return;
+		Spawn,               // normal
+		SpawnLocked,         // no character here, character recorded elsewhere: may download, can't create
+		Block                // banned or duplicate copy: don't spawn, show reason, disconnect
+	};
 
-		if (!r.ok)
+	// Chat message + center dialog (OK keeps them where they are) after a short delay, so it lands
+	// after the screen they're being sent to has opened.
+	void DelayedNotify(const std::string& eos, const std::string& msg, int seconds)
+	{
+		API::Timer::Get().DelayExecute([eos, msg]
 		{
-			// Leave entry unloaded: creation stays blocked with the "checking" message, and the
-			// reconcile timer retries the load. Never kick on a database error.
-			return;
-		}
+			if (!g_alive)
+				return;
+			AShooterPlayerController* pc = AsaApi::GetApiUtils().FindPlayerFromEOSID(ToF(eos));
+			// Already in the world (e.g. they downloaded a transferred character meanwhile): nothing to say.
+			if (pc && !pc->GetPlayerCharacter())
+			{
+				Notify(pc, msg);
+				Dialog(pc, kTitleBlocked, msg, false);
+			}
+		}, seconds);
+	}
+
+	// before_spawn = true: called from the login hook before the character is spawned, so bans and
+	// duplicates never enter the world. false: record arrived after spawn (DB was slow/down at login,
+	// or plugin reload) and the in-world path is used instead.
+	Gate ApplyRecord(const std::string& eos, AShooterPlayerController* pc, PlayerEntry& entry, const LoginResult& r, bool before_spawn)
+	{
+		const auto pid = [&]
+		{
+			const unsigned long long id = AsaApi::IApiUtils::GetPlayerID(pc);
+			return id ? id : entry.data_player_id;
+		};
 
 		g_this_excluded = r.excluded;
 
@@ -371,8 +500,12 @@ namespace
 		if (r.banned)
 		{
 			entry.kicked = true;
-			Kick(pc, BanMessage(r.ban_expires, r.ban_expires_text, r.ban_reason));
-			return;
+			entry.spawn_blocked = before_spawn;
+			g_discord.Post(Channel::Moderation, PlayerEvent("Banned player kicked on login", pc, eos,
+				{ "[Ban] " + (r.ban_expires == 0 ? std::string("permanent") : "until " + r.ban_expires_text + " UTC"),
+				  "[Reason] " + r.ban_reason }));
+			ScheduleKick(eos, pc, BanMessage(r.ban_expires, r.ban_expires_text, r.ban_reason));
+			return before_spawn ? Gate::Block : Gate::Spawn;
 		}
 
 		entry.has_row = r.has_row;
@@ -381,7 +514,7 @@ namespace
 		entry.row_in_transit = r.in_transit;
 
 		if (r.excluded)
-			return; // exempt server: no recording, no map lock
+			return Gate::Spawn; // exempt server: no recording, no map lock
 
 		// Optional backstop: an entry untouched for StaleEntryDays no longer locks the player.
 		if (entry.has_row && entry.row_server != g_server_key && g_cfg.verify.stale_entry_days > 0
@@ -396,8 +529,8 @@ namespace
 		{
 			// Backfill: existing character here and no record anywhere -> it's theirs.
 			if (entry.had_data_at_login)
-				Claim(entry, eos, AsaApi::IApiUtils::GetPlayerID(pc), "backfill on login");
-			return; // no character: creation or download will claim
+				Claim(entry, eos, pid(), "backfill on login");
+			return Gate::Spawn; // no character: creation or download will claim
 		}
 
 		if (entry.row_server == g_server_key)
@@ -405,8 +538,8 @@ namespace
 			// Their home server. Re-assert the row (upsert also restores it if verification
 			// removed it moments ago) and clear any in-transit flag from a failed upload.
 			if (entry.had_data_at_login)
-				Claim(entry, eos, AsaApi::IApiUtils::GetPlayerID(pc), "login");
-			return;
+				Claim(entry, eos, pid(), "login");
+			return Gate::Spawn;
 		}
 
 		// Recorded somewhere else.
@@ -414,18 +547,37 @@ namespace
 		{
 			// A copy of their character exists here (old save, restored archive): duplicate.
 			entry.kicked = true;
-			Kick(pc, Replace(g_cfg.msg.duplicate_login, "{server}", entry.row_server));
-			return;
+			entry.spawn_blocked = before_spawn;
+			g_discord.Post(Channel::Duplicates, PlayerEvent("Duplicate character login blocked", pc, eos,
+				{ "[Registered On] " + entry.row_server }));
+			ScheduleKick(eos, pc, Replace(g_cfg.msg.duplicate_login, "{server}", entry.row_server));
+			return before_spawn ? Gate::Block : Gate::Spawn;
 		}
-		// No character here: they may download a transferred character; creation stays blocked.
+
+		// No character here: they may be arriving by transfer (download), so say nothing now.
+		// Creation stays blocked; the message is shown only if they actually try to create.
+		return before_spawn ? Gate::SpawnLocked : Gate::Spawn;
 	}
 
-	void QueueRecordLoad(const std::string& eos)
+	void OnRecordLoaded(const std::string& eos, const LoginResult& r)
 	{
-		if (!g_worker)
+		auto it = g_players.find(eos);
+		if (it == g_players.end())
+			return; // already logged out
+		AShooterPlayerController* pc = AsaApi::GetApiUtils().FindPlayerFromEOSID(ToF(eos));
+		if (!pc)
 			return;
-		g_worker->Post([eos](Db& db)
+		if (!r.ok)
 		{
+			// Leave entry unloaded: creation stays blocked with the "checking" message, and the
+			// reconcile timer retries the load. Never kick on a database error.
+			return;
+		}
+		ApplyRecord(eos, pc, it->second, r, false);
+	}
+
+	LoginResult FetchRecord(Db& db, const std::string& eos)
+	{
 			LoginResult r;
 			const std::string e = db.Esc(eos);
 			const std::string key = db.Esc(g_server_key);
@@ -463,9 +615,26 @@ namespace
 			{
 				Log::GetLog()->error("Record load failed for {}: {}", eos, db.LastError());
 			}
+			return r;
+	}
 
+	void QueueRecordLoad(const std::string& eos)
+	{
+		if (!g_worker)
+			return;
+		g_worker->Post([eos](Db& db)
+		{
+			LoginResult r = FetchRecord(db, eos);
 			g_game_queue.Post([eos, r] { OnRecordLoaded(eos, r); });
 		});
+	}
+
+	// Game-thread connection, used for the login check and admin/RCON commands.
+	Db& CmdDb()
+	{
+		if (!g_cmd_db)
+			g_cmd_db = std::make_unique<Db>(g_cfg.db);
+		return *g_cmd_db;
 	}
 
 	// -----------------------------------------------------------------------------------------
@@ -486,6 +655,65 @@ namespace
 		}
 	}
 
+	void ScheduleKick(const std::string& eos, AShooterPlayerController* pc, const std::string& reason)
+	{
+		auto it = g_players.find(eos);
+		if (it == g_players.end())
+		{
+			// Not tracked (shouldn't happen for an online player): tell them and kick now.
+			Notify(pc, reason);
+			Kick(pc, reason);
+			return;
+		}
+		PlayerEntry& entry = it->second;
+		entry.kicked = true;
+		if (!entry.kick_msg.empty())
+			return;
+		entry.kick_msg = reason;
+		entry.kick_notified = false;
+		entry.kick_scheduled_at = std::chrono::steady_clock::now();
+	}
+
+	// Every 1 s. A player who was just let in is still on the loading screen and wouldn't see a
+	// message, so wait until their character has spawned (or 20 s at most), show the reason as a
+	// notification + chat message, then disconnect 4 s later.
+	void ProcessKicks()
+	{
+		const auto now = std::chrono::steady_clock::now();
+		std::vector<std::pair<AShooterPlayerController*, std::string>> due;
+		for (auto& [eos, entry] : g_players)
+		{
+			if (entry.kick_msg.empty())
+				continue;
+			AShooterPlayerController* pc = AsaApi::GetApiUtils().FindPlayerFromEOSID(ToF(eos));
+			if (!pc)
+				continue;
+
+			if (!entry.kick_notified)
+			{
+				const auto waited = now - entry.kick_scheduled_at;
+				if (pc->GetPlayerCharacter() || waited >= std::chrono::seconds(20)
+					|| (entry.spawn_blocked && waited >= std::chrono::seconds(3)))
+				{
+					Notify(pc, entry.kick_msg);
+					Dialog(pc, kTitleRefused, entry.kick_msg, true); // OK -> main menu
+					entry.kick_notified = true;
+					entry.kick_notified_at = now;
+				}
+			}
+			// Not in the world (spawn blocked): no dupe risk, so give them time to read and click OK;
+			// the server-side kick is only the backstop for a dialog left open.
+			else if (now - entry.kick_notified_at >= std::chrono::seconds(entry.spawn_blocked ? 20 : 4))
+			{
+				due.emplace_back(pc, entry.kick_msg);
+				entry.kick_notified_at = now; // retry in 4 s if the disconnect doesn't happen
+			}
+		}
+		// Kick outside the loop: the logout hook erases from g_players.
+		for (auto& [pc, msg] : due)
+			Kick(pc, msg);
+	}
+
 	// Every 5 s: record characters that appeared through creation or a transfer download,
 	// and retry record loads that failed.
 	void Reconcile()
@@ -499,6 +727,13 @@ namespace
 			if (it == g_players.end())
 				return;
 			PlayerEntry& entry = it->second;
+
+			if (pc->GetPlayerCharacter())
+			{
+				const std::string name = ToStd(AsaApi::IApiUtils::GetCharacterName(pc));
+				if (!name.empty())
+					entry.last_name = name;
+			}
 
 			if (!entry.loaded)
 			{
@@ -516,8 +751,22 @@ namespace
 			if (entry.has_row && entry.row_server != g_server_key && entry.had_data_at_login)
 				return;
 
+			// In transit but still standing here: the upload didn't happen (failed or cancelled).
+			// Clear the flag quietly; this is not an arrival.
+			if (entry.has_row && entry.row_server == g_server_key && entry.row_in_transit)
+			{
+				Claim(entry, eos, AsaApi::IApiUtils::GetPlayerID(pc), "upload did not complete");
+				return;
+			}
+
 			// Character exists here now: created (allowed) or downloaded via obelisk.
-			Claim(entry, eos, AsaApi::IApiUtils::GetPlayerID(pc), entry.has_row ? "transfer arrival" : "new character");
+			const bool arrival = entry.has_row;
+			const std::string from = entry.row_server;
+			Claim(entry, eos, AsaApi::IApiUtils::GetPlayerID(pc), arrival ? "transfer arrival" : "new character");
+			if (arrival)
+				g_discord.Post(Channel::Transfers, PlayerEvent("Transfer arrived", pc, eos, { "[From] " + from, "[To] " + g_server_key }));
+			else
+				g_discord.Post(Channel::Logins, PlayerEvent("New character created", pc, eos));
 		});
 	}
 
@@ -554,9 +803,10 @@ namespace
 				for (auto& [pc, msg] : kicks)
 				{
 					auto it = g_players.find(EosOf(pc));
-					if (it != g_players.end())
-						it->second.kicked = true;
-					Kick(pc, msg);
+					if (it != g_players.end() && !it->second.kick_msg.empty())
+						continue; // already being removed
+					g_discord.Post(Channel::Moderation, PlayerEvent("Banned player kicked (ban sweep)", pc, EosOf(pc), { "[Message] " + msg }));
+					ScheduleKick(EosOf(pc), pc, msg);
 				}
 			});
 		});
@@ -565,8 +815,18 @@ namespace
 	// Every IntervalMinutes: remove this server's records whose character profile is gone.
 	void Verify()
 	{
-		if (!g_worker || !g_cfg.verify.enabled || g_this_excluded)
+		if (!g_worker)
 			return;
+		if (!g_cfg.verify.enabled)
+		{
+			Log::GetLog()->info("Verification: disabled in config");
+			return;
+		}
+		if (g_this_excluded)
+		{
+			Log::GetLog()->info("Verification: skipped, this server is in the exclusions table");
+			return;
+		}
 
 		std::unordered_set<std::string> online;
 		ForEachOnlinePlayer([&](AShooterPlayerController* pc) { online.insert(EosOf(pc)); });
@@ -605,6 +865,9 @@ namespace
 				return;
 			}
 
+			Log::GetLog()->info("Verification: {} record(s) on {} older than {} min to check against {}",
+				rows->size(), g_server_key, vc.grace_min, dir.string());
+
 			int removed = 0, candidates = 0;
 			for (const DbRow& r : *rows)
 			{
@@ -629,12 +892,16 @@ namespace
 					db.Exec("INSERT INTO verification_log (eos_id, server_key, player_id, last_seen, removed_at, reason) VALUES ('"
 						+ db.Esc(eos) + "','" + key + "'," + pid + "," + last_seen + ",UNIX_TIMESTAMP(),'no profile in save')");
 					Log::GetLog()->warn("Verification removed {} (PlayerId {}) from {}: no profile in save", eos, pid, g_server_key);
+					g_discord.Post(Channel::Duplicates, "[Event] Character record removed (no profile in save)\n[Server] " + g_server_key
+						+ "\n[EOS] " + eos + "\n[PlayerId] " + pid + "\n[Last Seen] " + FormatUnix(ToI64(r[2]))
+						+ "\n[Timestamp] " + Stamp());
 				}
 			}
 
 			if (candidates > removed)
 				Log::GetLog()->warn("Verification: {} more missing profiles left for the next run (MaxRemovalsPerRun={})",
 					candidates - removed, vc.max_removals_per_run);
+			Log::GetLog()->info("Verification: done, {} removed", removed);
 		});
 	}
 }
@@ -651,22 +918,57 @@ DECLARE_HOOK(AShooterPlayerController_ServerUploadCurrentCharacterAndItems_Imple
 bool Hook_AShooterGameMode_HandleNewPlayer_Implementation(AShooterGameMode* _this, AShooterPlayerController* pc,
 	UPrimalPlayerData* player_data, AShooterCharacter* character, bool is_from_login)
 {
-	const bool result = AShooterGameMode_HandleNewPlayer_Implementation_original(_this, pc, player_data, character, is_from_login);
-
 	// g_server_key is empty until the world is ready; anyone joining before that is picked up
 	// by InitWorldDependent's sweep of online players.
-	if (g_alive && is_from_login && pc && !g_server_key.empty())
+	if (!(g_alive && is_from_login && pc && !g_server_key.empty()))
+		return AShooterGameMode_HandleNewPlayer_Implementation_original(_this, pc, player_data, character, is_from_login);
+
+	const std::string eos = EosOf(pc);
+	if (eos.empty())
+		return AShooterGameMode_HandleNewPlayer_Implementation_original(_this, pc, player_data, character, is_from_login);
+
+	PlayerEntry& entry = g_players[eos];
+	entry = PlayerEntry{};
+	entry.had_data_at_login = player_data != nullptr;
+
+	std::string saved_name;
+	if (player_data && player_data->MyDataField())
 	{
-		const std::string eos = EosOf(pc);
-		if (!eos.empty())
-		{
-			PlayerEntry entry;
-			entry.had_data_at_login = player_data != nullptr;
-			g_players[eos] = entry;
-			QueueRecordLoad(eos);
-		}
+		saved_name = ToStd(player_data->MyDataField()->MyPlayerCharacterConfigField().PlayerCharacterNameField());
+		entry.data_player_id = player_data->MyDataField()->PlayerDataIDField();
 	}
-	return result;
+	entry.last_name = saved_name;
+
+	// Decide before anything spawns: one primary-key lookup on the game thread (LAN, ~1 ms).
+	// If the database doesn't answer, fall back to the background load after spawning.
+	const LoginResult r = FetchRecord(CmdDb(), eos);
+
+	std::vector<std::string> join_lines{ std::string("[Character Here] ") + (entry.had_data_at_login ? "yes" : "no") };
+	if (r.ok && r.has_row && r.in_transit && r.server != g_server_key)
+		join_lines.push_back("[Arriving From] " + r.server + " (transfer)");
+	g_discord.Post(Channel::Logins, PlayerEvent("Joined", pc, eos, join_lines, saved_name));
+	if (!r.ok)
+	{
+		const bool result = AShooterGameMode_HandleNewPlayer_Implementation_original(_this, pc, player_data, character, is_from_login);
+		QueueRecordLoad(eos);
+		return result;
+	}
+
+	const Gate gate = ApplyRecord(eos, pc, g_players[eos], r, true);
+	if (gate == Gate::Block)
+	{
+		// Banned, or a duplicate copy of a character recorded elsewhere: never spawn it.
+		// Hold them on the character creation screen; ProcessKicks shows the reason and disconnects.
+		// (Never the download screen: that's left to the game's own transfer flow.)
+		Log::GetLog()->info("Spawn blocked for {} at login", eos);
+		pc->ClientShowCharacterCreationUI(false);
+		return false;
+	}
+
+	// Normal game flow from here, including its own download screen during a transfer.
+	// A player whose character lives elsewhere gets "last seen on X" shortly after joining,
+	// and any attempt to create a character here is refused (creation hook).
+	return AShooterGameMode_HandleNewPlayer_Implementation_original(_this, pc, player_data, character, is_from_login);
 }
 
 void Hook_AShooterGameMode_Logout(AShooterGameMode* _this, AController* exiting)
@@ -678,6 +980,8 @@ void Hook_AShooterGameMode_Logout(AShooterGameMode* _this, AController* exiting)
 		if (it != g_players.end())
 		{
 			const PlayerEntry& entry = it->second;
+			g_discord.Post(Channel::Logins, PlayerEvent("Left", static_cast<AShooterPlayerController*>(exiting), eos,
+				{ "[Session] " + Duration(std::chrono::steady_clock::now() - entry.joined_at) }, entry.last_name));
 			if (!g_this_excluded && entry.has_row && entry.row_server == g_server_key && g_worker)
 			{
 				// Touch last_seen so the verification grace window starts at logout.
@@ -704,8 +1008,10 @@ void Hook_AShooterPlayerState_ServerRequestCreateNewPlayer_Implementation(AShoot
 
 		if (it == g_players.end() || !it->second.loaded)
 		{
-			Notify(pc, g_cfg.msg.record_loading);
-			pc->ClientShowCharacterCreationUI(true);
+			// false = back to character creation (true would open "Download ARK Survivor").
+			pc->ClientShowCharacterCreationUI(false);
+			// Notify after the screen change; sent with it, the message flashes and is gone.
+			DelayedNotify(eos, g_cfg.msg.record_loading, 2);
 			return; // blocked until we know where their character is
 		}
 
@@ -713,8 +1019,10 @@ void Hook_AShooterPlayerState_ServerRequestCreateNewPlayer_Implementation(AShoot
 		if (entry.has_row && entry.row_server != g_server_key)
 		{
 			Log::GetLog()->info("Blocked character creation for {} (recorded on {})", eos, entry.row_server);
-			Notify(pc, Replace(g_cfg.msg.creation_blocked, "{server}", entry.row_server));
-			pc->ClientShowCharacterCreationUI(true);
+			g_discord.Post(Channel::Duplicates, PlayerEvent("Character creation blocked", pc, eos,
+				{ "[Registered On] " + entry.row_server }));
+			pc->ClientShowCharacterCreationUI(false); // back to character creation
+			DelayedNotify(eos, Replace(g_cfg.msg.creation_blocked, "{server}", entry.row_server), 2);
 			return;
 		}
 	}
@@ -726,12 +1034,41 @@ void Hook_AShooterPlayerState_ServerRequestCreateNewPlayer_Implementation(AShoot
 void Hook_AShooterPlayerController_ServerUploadCurrentCharacterAndItems_Implementation(AShooterPlayerController* _this,
 	UPrimalInventoryComponent* inventory, int for_club_ark)
 {
+	// A player waiting to be kicked (duplicate copy or ban) must not upload: uploading a duplicate
+	// copy is exactly the dupe this plugin exists to stop. This is the one case where the hook blocks.
+	if (g_alive && _this)
+	{
+		auto pending = g_players.find(EosOf(_this));
+		if (pending != g_players.end() && pending->second.kicked)
+		{
+			Log::GetLog()->warn("Blocked upload from {} (pending kick)", pending->first);
+			return;
+		}
+	}
+
+	// Build the Discord event before the upload runs: the upload removes the character from the
+	// world, after which its name can no longer be read.
+	std::string upload_event;
+	const std::string eos = (g_alive && _this) ? EosOf(_this) : std::string();
+	if (!eos.empty())
+		upload_event = PlayerEvent("Character uploaded", _this, eos, { "[From] " + g_server_key });
+
 	AShooterPlayerController_ServerUploadCurrentCharacterAndItems_Implementation_original(_this, inventory, for_club_ark);
 
-	if (!g_alive || !_this || g_this_excluded || !g_worker)
+	if (!g_alive || !_this || eos.empty())
 		return;
 
-	const std::string eos = EosOf(_this);
+	// This function runs more than once per obelisk transfer (e.g. an items pass before the
+	// character itself). Only the call that actually took the character out of the world is the
+	// upload; if the character is still here, nothing was uploaded.
+	if (_this->GetPlayerCharacter())
+		return;
+
+	g_discord.Post(Channel::Transfers, upload_event);
+
+	if (g_this_excluded || !g_worker)
+		return;
+
 	auto it = g_players.find(eos);
 	if (it == g_players.end() || !it->second.has_row || it->second.row_server != g_server_key)
 		return;
@@ -763,12 +1100,6 @@ namespace
 		return out;
 	}
 
-	Db& CmdDb()
-	{
-		if (!g_cmd_db)
-			g_cmd_db = std::make_unique<Db>(g_cfg.db);
-		return *g_cmd_db;
-	}
 
 	std::string CmdBan(const std::vector<std::string>& a, const std::string& by)
 	{
@@ -808,10 +1139,13 @@ namespace
 				if (r && !r->empty())
 					expires_text = (*r)[0][0].value_or("");
 			}
-			Kick(pc, BanMessage(hours == 0 ? 0 : 1, expires_text, reason));
+			ScheduleKick(eos, pc, BanMessage(hours == 0 ? 0 : 1, expires_text, reason));
 		}
 
 		Log::GetLog()->info("{} banned {} ({}): {}", by, eos, hours == 0 ? "permanent" : std::to_string(hours) + "h", reason);
+		g_discord.Post(Channel::Moderation, "[Event] Ban\n[EOS] " + eos + "\n[Length] "
+			+ (hours == 0 ? std::string("permanent") : std::to_string(hours) + " hours") + "\n[Reason] " + reason
+			+ "\n[By] " + by + " on " + g_server_key + "\n[Timestamp] " + Stamp());
 		return hours == 0
 			? "Banned " + eos + " permanently: " + reason
 			: "Banned " + eos + " for " + std::to_string(hours) + " hours: " + reason;
@@ -830,6 +1164,9 @@ namespace
 		if (n < 0)
 			return "Database error: " + db.LastError();
 		Log::GetLog()->info("{} unbanned {}", by, eos);
+		if (n > 0)
+			g_discord.Post(Channel::Moderation, "[Event] Unban\n[EOS] " + eos + "\n[By] " + by + " on " + g_server_key
+				+ "\n[Timestamp] " + Stamp());
 		return n > 0 ? "Unbanned " + eos : "No ban found for " + eos;
 	}
 
@@ -877,6 +1214,9 @@ namespace
 			it->second.row_in_transit = false;
 		}
 		Log::GetLog()->info("{} reset the character record for {}", by, eos);
+		if (n > 0)
+			g_discord.Post(Channel::Moderation, "[Event] Character record reset\n[EOS] " + eos + "\n[By] " + by + " on "
+				+ g_server_key + "\n[Timestamp] " + Stamp());
 		return n > 0 ? "Reset " + eos + ": next server they log into with a character becomes their record"
 			: "No record for " + eos;
 	}
@@ -952,13 +1292,17 @@ namespace
 
 		auto& timer = API::Timer::Get();
 		timer.RecurringExecute(L"PlayerLogin_Drain", [] { if (g_alive) g_game_queue.Drain(); }, 1, -1, false);
+		timer.RecurringExecute(L"PlayerLogin_Discord", [] { if (g_alive) g_discord.Flush(); }, 2, -1, false);
+		timer.RecurringExecute(L"PlayerLogin_Kicks", [] { if (g_alive) ProcessKicks(); }, 1, -1, false);
 		timer.RecurringExecute(L"PlayerLogin_Reconcile", [] { if (g_alive) Reconcile(); }, 5, -1, false);
 		timer.RecurringExecute(L"PlayerLogin_Sweep", [] { if (g_alive) Sweep(); }, 60, -1, false);
+		Log::GetLog()->info("Verification: first run in {} min, then every {} min",
+			g_cfg.verify.startup_delay_min, g_cfg.verify.interval_min);
 		timer.DelayExecute(L"PlayerLogin_VerifyStart", []
 		{
 			if (!g_alive)
 				return;
-			Verify();
+			// AsaApi's recurring timer fires once immediately, so this is also the first run.
 			API::Timer::Get().RecurringExecute(L"PlayerLogin_Verify", [] { if (g_alive) Verify(); },
 				g_cfg.verify.interval_min * 60, -1, false);
 		}, g_cfg.verify.startup_delay_min * 60);
@@ -1000,6 +1344,11 @@ extern "C" __declspec(dllexport) void Plugin_Init()
 		Log::GetLog()->critical("PlayerLogin: config error, plugin disabled: {}", e.what());
 		return;
 	}
+
+	g_discord.SetUrl(Channel::Logins, g_cfg.discord.logins);
+	g_discord.SetUrl(Channel::Transfers, g_cfg.discord.transfers);
+	g_discord.SetUrl(Channel::Duplicates, g_cfg.discord.duplicates);
+	g_discord.SetUrl(Channel::Moderation, g_cfg.discord.moderation);
 
 	g_worker = std::make_unique<DbWorker>(g_cfg.db);
 	g_worker->Start();
@@ -1059,5 +1408,6 @@ extern "C" __declspec(dllexport) void Plugin_Unload()
 	}
 	g_cmd_db.reset();
 	g_game_queue.Clear();
+	g_discord.Clear();
 	g_players.clear();
 }
