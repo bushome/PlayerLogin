@@ -1,9 +1,6 @@
-[submodule "ASA/AsaApi"]
-	path = ASA/AsaApi
+[submodule "ASA/extern/AsaApi"]
+	path = ASA/extern/AsaApi
 	url = https://github.com/ArkServerApi/AsaApi.git
-[submodule "ASE/ASE/ArkApi"]
-	path = ASE/ASE/ArkApi
-	url = https://github.com/Michidu/ARK-Server-API.git
-[submodule "ASE/ArkApi"]
-	path = ASE/ArkApi
-	url = https://github.com/Michidu/ARK-Server-API.git
+[submodule "ASE/extern/AseApi"]
+	path = ASE/extern/AseApi
+	url = https://github.com/ArkServerApi/AseApi.git

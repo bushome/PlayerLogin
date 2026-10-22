@@ -15,7 +15,8 @@ backed by MariaDB. ASE port of the ASA plugin. Same design and database layout; 
    GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, INDEX ON playerlogin.* TO 'playerlogin'@'localhost';
    ```
    Use `'playerlogin'@'<ip>'` instead of `localhost` for servers on other machines (you run `skip-name-resolve`).
-2. Copy `PlayerLogin.dll`, `config.json`, `PluginInfo.json` into `ShooterGame/Binaries/Win64/ArkApi/Plugins/PlayerLogin/` on every ASE server.
+2. Copy the contents of `ASE/out/PlayerLogin/` (from the build) into `ShooterGame/Binaries/Win64/ArkApi/Plugins/PlayerLogin/` on every ASE server:
+   `PlayerLogin.dll`, `PlayerLogin.pdb`, `config.json`, `config.commented.json`, `PluginInfo.json`.
 3. Set the MySQL fields in `config.json`. Every server must point at the same database.
 4. Start the server and check the plugin log for this line (ASE keeps profiles directly in `Saved\SavedArks`):
    `PlayerLogin: this server is '<key>', profiles in <path>`
@@ -25,9 +26,19 @@ backed by MariaDB. ASE port of the ASA plugin. Same design and database layout; 
 ## Configuration
 
 `config.json` sits next to `PlayerLogin.dll`. JSON can't hold comments, so every field is described here, and
-`Plugin/config.commented.jsonc` is the same file with a comment on every line (reference only; the plugin never reads it).
-It's read when the plugin loads: after editing, reload the plugin or restart the server.
+`config.commented.json` (in `configs/`, and copied into `out/PlayerLogin/` by the build) is the same file with an explanation
+on every setting. It is reference only: the plugin reads `config.json`, which must stay plain JSON with no comments.
 Missing fields fall back to the defaults shown.
+
+After editing `config.json`, run `playerlogin.reload` (RCON, or the in-game console as an admin):
+
+- **Applied at once:** `Messages`, `Discord`, and `Verification` `Enabled`, `GraceMinutes`, `StaleEntryDays`,
+  `MaxRemovalsPerRun`, `ProfileDirectory`.
+- **Need a server restart:** `Mysql`, `ServerKeyOverride`, `StartupDelayMinutes`, `IntervalMinutes`. The reload keeps their
+  running values and names any that changed in its reply.
+- If `config.json` has a mistake, nothing changes: the reply and the plugin log show the error and the previous settings stay active.
+- If `config.json` was broken when the server started, the plugin doesn't start but `playerlogin.reload` still works:
+  fix the file and run it to start the plugin without a restart.
 
 ### `Mysql`
 
@@ -98,6 +109,7 @@ against it (a renamed key reads as "character is on another server").
 | `playerlogin.unban <steamID>` | Removes the ban. |
 | `playerlogin.LastSeen <steamID>` | `<steamID> was last seen on <server> at <time> UTC`, plus `(character uploaded, in transit)` if applicable. `No record for <steamID>` otherwise. |
 | `playerlogin.reset <steamID>` | Deletes the player's record. The next server they log into with a character becomes their record. |
+| `playerlogin.reload` | Re-reads `config.json`. See [Configuration](#configuration) for what applies at once. |
 
 ## Exclusions
 
@@ -168,26 +180,47 @@ Reset returning players by hand (`playerlogin.reset`), and when retiring a map c
 
 ## Build
 
-The ARK Server API (ASE) is a git submodule at `ASE/ArkApi` (github.com/Michidu/ARK-Server-API).
-It ships a prebuilt `out_lib/ArkApi.lib`, so there is nothing to build there:
+`ASE/` is a self-contained Visual Studio solution. The server API is the
+[ArkServerApi (AseApi)](https://github.com/ArkServerApi/AseApi) submodule at `ASE/extern/AseApi`, which ships a prebuilt
+`out_lib/ArkApi.lib`, so there is nothing to build there. Clone with submodules:
 ```
-git submodule add https://github.com/Michidu/ARK-Server-API.git ASE/ArkApi
+git clone --recurse-submodules https://github.com/bushome/PlayerLogin.git
 ```
-Open `ASE/PlayerLogin.sln` in Visual Studio 2026 and build **Release | x64**. Output in `ASE/x64/Release/`:
-`PlayerLogin.dll`, `config.json`, `PluginInfo.json`.
+or, in an existing clone:
+```
+git submodule update --init --recursive
+```
+1. Open `ASE/PlayerLogin.sln` in Visual Studio 2026 and build **Release | x64**.
+   vcpkg (manifest mode, `vcpkg.json`) installs libmariadb on the first build.
+2. The build assembles `ASE/out/PlayerLogin/`: `PlayerLogin.dll`, `PlayerLogin.pdb`, `config.json`,
+   `config.commented.json` and `PluginInfo.json`, the whole plugin folder. It also writes `ASE/out/PlayerLogin.dll.ArkApi`
+   for the API's hot reload.
+
+### Layout
+
+| Path | Contents |
+|---|---|
+| `src/` | `PlayerLogin.cpp`, `Database.h` (MariaDB worker), `Discord.h` (webhooks) |
+| `configs/` | `config.json`, `config.commented.json`, `PluginInfo.json` |
+| `sql/` | `schema.sql` (the plugin creates these tables itself) |
+| `extern/AseApi/` | AseApi submodule |
+| `out/` | Build output (ignored by git) |
 
 ### Build notes (ASE plugins)
 
-- C++17 (the ASE API headers are written for it), Character Set = Unicode, `/MD`, vcpkg static + dynamic CRT.
-- Include `ArkApi/version/Core/Public`; link `ArkApi/out_lib/ArkApi.lib`.
+- C++20 (AseApi's `UE.h` uses `std::bit_cast`; include `<bit>` before `API/ARK/Ark.h`), Character Set = Unicode, `/MD`,
+  vcpkg static + dynamic CRT.
+- Include `extern/AseApi/version/Core/Public`; link `extern/AseApi/out_lib/ArkApi.lib`.
+- `ARK_GAME` is defined by AseApi's `Ark.h`; don't define it in the project.
 - No vcpkg `fmt`: the ASE headers use the fmt bundled with their spdlog.
-- The public repo's headers are v3.55; plugins built against them load on v3.56.
 - ASE API timers can't be cancelled when a plugin unloads, so periodic work runs from one
   `AddOnTimerCallback` that `Plugin_Unload` removes.
 
 ## Verified
 
-Tested on a dedicated test server, then on the live cluster:
+Tested on a dedicated test server, then on the live cluster. `playerlogin.reload` and the `src/`, `configs/`,
+`extern/`, `out/` project layout were added after this testing.
+
 
 | Area | Result |
 |---|---|

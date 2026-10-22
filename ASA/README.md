@@ -15,7 +15,8 @@ backed by MariaDB. Replaces the parts of Lethal Login this cluster uses.
    GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, INDEX ON playerlogin.* TO 'playerlogin'@'localhost';
    ```
    Use `'playerlogin'@'<ip>'` instead of `localhost` for servers on other machines (you run `skip-name-resolve`).
-2. Copy `PlayerLogin.dll`, `config.json`, `PluginInfo.json` into `ArkApi/Plugins/PlayerLogin/` on every server.
+2. Copy the contents of `ASA/out/PlayerLogin/` (from the build) into `ArkApi/Plugins/PlayerLogin/` on every server:
+   `PlayerLogin.dll`, `PlayerLogin.pdb`, `config.json`, `config.commented.json`, `PluginInfo.json`.
 3. Set the MySQL fields in `config.json`. Every server must point at the same database.
 4. Start the server and check the plugin log for this line:
    `PlayerLogin: this server is '<key>', profiles in <path>`
@@ -25,9 +26,19 @@ backed by MariaDB. Replaces the parts of Lethal Login this cluster uses.
 ## Configuration
 
 `config.json` sits next to `PlayerLogin.dll`. JSON can't hold comments, so every field is described here, and
-`Plugin/config.commented.jsonc` is the same file with a comment on every line (reference only; the plugin never reads it).
-It's read when the plugin loads: after editing, reload the plugin or restart the server.
+`config.commented.json` (in `configs/`, and copied into `out/PlayerLogin/` by the build) is the same file with an explanation
+on every setting. It is reference only: the plugin reads `config.json`, which must stay plain JSON with no comments.
 Missing fields fall back to the defaults shown.
+
+After editing `config.json`, run `playerlogin.reload` (RCON, or the in-game console as an admin):
+
+- **Applied at once:** `Messages`, `Discord`, and `Verification` `Enabled`, `GraceMinutes`, `StaleEntryDays`,
+  `MaxRemovalsPerRun`, `ProfileDirectory`.
+- **Need a server restart:** `Mysql`, `ServerKeyOverride`, `StartupDelayMinutes`, `IntervalMinutes`. The reload keeps their
+  running values and names any that changed in its reply.
+- If `config.json` has a mistake, nothing changes: the reply and the plugin log show the error and the previous settings stay active.
+- If `config.json` was broken when the server started, the plugin doesn't start but `playerlogin.reload` still works:
+  fix the file and run it to start the plugin without a restart.
 
 ### `Mysql`
 
@@ -98,6 +109,7 @@ against it (a renamed key reads as "character is on another server").
 | `playerlogin.unban <eosID>` | Removes the ban. |
 | `playerlogin.LastSeen <eosID>` | `<eos> was last seen on <server> at <time> UTC`, plus `(character uploaded, in transit)` if applicable. `No record for <eos>` otherwise. |
 | `playerlogin.reset <eosID>` | Deletes the player's record. The next server they log into with a character becomes their record. |
+| `playerlogin.reload` | Re-reads `config.json`. See [Configuration](#configuration) for what applies at once. |
 
 ## Exclusions
 
@@ -170,16 +182,33 @@ Reset returning players by hand (`playerlogin.reset`), and when retiring a map c
 
 ## Build
 
-AsaApi is a git submodule at `ASA/AsaApi`. After cloning this repo:
+`ASA/` is a self-contained Visual Studio solution. AsaApi is a git submodule at `ASA/extern/AsaApi`. Clone with submodules:
+```
+git clone --recurse-submodules https://github.com/bushome/PlayerLogin.git
+```
+or, in an existing clone:
 ```
 git submodule update --init --recursive
 ```
-1. Build `ASA/AsaApi/AsaApi.sln` as **Release | x64** (produces `ASA/AsaApi/x64/Release/AsaApi.lib`).
-2. Open `ASA/PlayerLogin.sln` in Visual Studio 2026 and build **Release | x64**.
+1. Open `ASA/PlayerLogin.sln` in Visual Studio 2026 and build **Release | x64**.
    vcpkg (manifest mode, `vcpkg.json`) installs libmariadb and fmt on the first build.
-3. Output: `ASA/x64/Release/` holds `PlayerLogin.dll`, `config.json` and `PluginInfo.json`, the whole plugin folder.
+2. The build assembles `ASA/out/PlayerLogin/`: `PlayerLogin.dll`, `PlayerLogin.pdb`, `config.json`,
+   `config.commented.json` and `PluginInfo.json`, the whole plugin folder. It also writes `ASA/out/PlayerLogin.dll.arkapi`
+   for AsaApi's hot reload.
 
-To build against a newer AsaApi: `cd ASA/AsaApi && git pull`, rebuild it, then commit the submodule bump.
+The project links `extern/AsaApi/out_lib/AsaApi.lib`, which ships in the AsaApi repo. If it's missing, build
+`extern/AsaApi/AsaApi.sln` (Release, x64) or copy `AsaApi.lib` from the Lib folder of the AsaApi release zip.
+To build against a newer AsaApi: `cd ASA/extern/AsaApi && git pull`, then commit the submodule bump.
+
+### Layout
+
+| Path | Contents |
+|---|---|
+| `src/` | `PlayerLogin.cpp`, `Database.h` (MariaDB worker), `Discord.h` (webhooks) |
+| `configs/` | `config.json`, `config.commented.json`, `PluginInfo.json` |
+| `sql/` | `schema.sql` (the plugin creates these tables itself) |
+| `extern/AsaApi/` | AsaApi submodule |
+| `out/` | Build output (ignored by git) |
 
 ### Build notes (apply to any AsaApi plugin)
 
@@ -187,11 +216,13 @@ To build against a newer AsaApi: `cd ASA/AsaApi && git pull`, rebuild it, then c
 - Project settings: Character Set = Unicode (AsaApi's UE headers need a 2-byte TCHAR), C++20, `/MD`, vcpkg "Use Static Libraries" + "Use Dynamic CRT" (= `x64-windows-static-md`, so dependencies link into the plugin DLL).
 - AsaApi's `UnrealString.h` includes `<fmt/format.h>`: add `fmt` to `vcpkg.json`.
 - Don't define `WIN32_LEAN_AND_MEAN`; AsaApi's `Base.h` already does.
-- Include dirs: `AsaApi/AsaApi/Core/Public` and `AsaApi/AsaApi/Core/Public/API/UE`; link `AsaApi.lib` from `AsaApi/x64/Release`.
+- Include dirs: `extern/AsaApi/AsaApi/Core/Public` and `extern/AsaApi/AsaApi/Core/Public/API/UE`.
 
 ## Verified
 
-Tested on a dedicated test server, then on the live cluster:
+Tested on a dedicated test server, then on the live cluster. `playerlogin.reload` and the `src/`, `configs/`,
+`extern/`, `out/` project layout were added after this testing.
+
 
 | Area | Result |
 |---|---|

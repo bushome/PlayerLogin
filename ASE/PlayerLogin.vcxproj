@@ -6,12 +6,28 @@
       <Platform>x64</Platform>
     </ProjectConfiguration>
   </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\PlayerLogin.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\Database.h" />
+    <ClInclude Include="src\Discord.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="vcpkg.json" />
+    <None Include="configs\config.json" />
+    <None Include="configs\config.commented.json" />
+    <None Include="configs\PluginInfo.json" />
+    <None Include="sql\schema.sql" />
+    <None Include="README.md" />
+  </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
     <ProjectGuid>{2FE0AB29-DBF5-4B5E-B9FA-EB9C1F903970}</ProjectGuid>
     <RootNamespace>PlayerLogin</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+    <ProjectName>PlayerLogin</ProjectName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
@@ -22,17 +38,15 @@
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
-  <ImportGroup Label="ExtensionSettings">
-  </ImportGroup>
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
-  <PropertyGroup Label="UserMacros">
-    <!-- ARK Server API (ASE) git submodule next to this project; ships a prebuilt out_lib\ArkApi.lib -->
-    <ArkApiDir>$(MSBuildThisFileDirectory)ArkApi\</ArkApiDir>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <OutDir>$(SolutionDir)out\</OutDir>
+    <IntDir>$(OutDir)$(Platform)\</IntDir>
   </PropertyGroup>
-  <!-- vcpkg manifest mode (vcpkg.json in this folder). Static libs + dynamic CRT = x64-windows-static-md,
-       so libmariadb links into PlayerLogin.dll and nothing extra ships with the plugin. -->
+  <!-- vcpkg manifest mode (vcpkg.json, libmariadb only: AseApi bundles the fmt copy its headers use).
+       Static libs + dynamic CRT = x64-windows-static-md, so libmariadb links into PlayerLogin.dll. -->
   <PropertyGroup Label="Vcpkg">
     <VcpkgEnableManifest>true</VcpkgEnableManifest>
   </PropertyGroup>
@@ -46,16 +60,13 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <!-- UNICODE/_UNICODE come from CharacterSet=Unicode. C++17: the ASE API headers are written for it. -->
-      <PreprocessorDefinitions>NDEBUG;_WINDOWS;_USRDLL;NOMINMAX;ARK_GAME;_SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <!-- UNICODE/_UNICODE come from CharacterSet=Unicode. ARK_GAME is defined by AseApi's Ark.h. -->
+      <PreprocessorDefinitions>PROJECT_NAME="$(ProjectName)";NDEBUG;_WINDOWS;_USRDLL;NOMINMAX;_SILENCE_ALL_CXX17_DEPRECATION_WARNINGS;_SILENCE_ALL_CXX20_DEPRECATION_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <PrecompiledHeader>NotUsing</PrecompiledHeader>
-      <AdditionalIncludeDirectories>$(ArkApiDir)version\Core\Public;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <LanguageStandard>stdcpp17</LanguageStandard>
-      <LanguageStandard_C>stdc17</LanguageStandard_C>
+      <LanguageStandard>stdcpp20</LanguageStandard>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
       <AdditionalOptions>/utf-8 /Zc:__cplusplus /bigobj %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalIncludeDirectories>$(SolutionDir)extern\AseApi\version\Core\Public\;$(ProjectDir)src\</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -63,35 +74,27 @@
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
-      <AdditionalLibraryDirectories>$(ArkApiDir)out_lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <!-- libmariadb (static) needs these Windows libs; vcpkg auto-links the .lib files themselves -->
-      <AdditionalDependencies>ArkApi.lib;ws2_32.lib;secur32.lib;crypt32.lib;shlwapi.lib;bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <!-- libmariadb (static) needs ws2_32, secur32, crypt32, shlwapi and bcrypt; vcpkg links libmariadb itself. -->
+      <AdditionalDependencies>$(SolutionDir)extern\AseApi\out_lib\ArkApi.lib;ws2_32.lib;secur32.lib;crypt32.lib;shlwapi.lib;bcrypt.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PreBuildEvent>
-      <Command>if not exist "$(ArkApiDir)out_lib\ArkApi.lib" (echo error: ArkApi.lib not found. Run "git submodule update --init --recursive". &amp; exit 1)</Command>
-      <Message>Check ArkApi.lib</Message>
+      <Command>if exist "$(TargetDir)$(TargetFileName).ArkApi" del /q "$(TargetDir)$(TargetFileName).ArkApi"</Command>
     </PreBuildEvent>
     <PostBuildEvent>
-      <Command>xcopy /Y /Q "$(ProjectDir)Plugin\config.json" "$(OutDir)" &gt;nul &amp;&amp; xcopy /Y /Q "$(ProjectDir)Plugin\PluginInfo.json" "$(OutDir)" &gt;nul</Command>
-      <Message>Copy config.json and PluginInfo.json next to the DLL</Message>
+      <Command>copy /y "$(TargetDir)$(TargetFileName)" "$(TargetDir)$(TargetFileName).ArkApi"
+if not exist "$(TargetDir)PlayerLogin" mkdir "$(TargetDir)PlayerLogin"
+copy /y "$(TargetDir)$(TargetFileName)" "$(TargetDir)PlayerLogin\"
+copy /y "$(TargetDir)$(TargetName).pdb" "$(TargetDir)PlayerLogin\"
+copy /y "$(ProjectDir)configs\PluginInfo.json" "$(TargetDir)PlayerLogin\"
+copy /y "$(ProjectDir)configs\config.json" "$(TargetDir)PlayerLogin\"
+copy /y "$(ProjectDir)configs\config.commented.json" "$(TargetDir)PlayerLogin\"</Command>
+      <Message>Assembling out\PlayerLogin\ plugin folder</Message>
     </PostBuildEvent>
   </ItemDefinitionGroup>
-  <ItemGroup>
-    <ClCompile Include="Source\PlayerLogin.cpp" />
-  </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="Source\Database.h" />
-    <ClInclude Include="Source\Discord.h" />
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="vcpkg.json" />
-    <None Include="Plugin\config.json" />
-    <None Include="Plugin\config.commented.jsonc" />
-    <None Include="Plugin\PluginInfo.json" />
-    <None Include="sql\schema.sql" />
-    <None Include="README.md" />
-  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
-  <ImportGroup Label="ExtensionTargets">
-  </ImportGroup>
+  <!-- Fail early with a readable message if the AseApi submodule is missing. -->
+  <Target Name="CheckAseApi" BeforeTargets="PrepareForBuild">
+    <Error Condition="!Exists('$(SolutionDir)extern\AseApi\version\Core\Public\API\ARK\Ark.h')" Text="AseApi headers not found. Run: git submodule update --init --recursive" />
+    <Error Condition="!Exists('$(SolutionDir)extern\AseApi\out_lib\ArkApi.lib')" Text="ArkApi.lib not found in extern\AseApi\out_lib. It ships in the AseApi repo; run: git submodule update --init --recursive" />
+  </Target>
 </Project>

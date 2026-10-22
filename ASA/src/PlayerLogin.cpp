@@ -37,7 +37,9 @@
 #include "Database.h"
 #include "Discord.h"
 
-#pragma comment(lib, "AsaApi.lib")
+#ifndef PROJECT_NAME
+#define PROJECT_NAME "PlayerLogin" // the project file defines it from $(ProjectName)
+#endif
 
 namespace fs = std::filesystem;
 using namespace PlayerLogin;
@@ -351,8 +353,11 @@ namespace
 	// Config loading
 	// -----------------------------------------------------------------------------------------
 
-	void LoadConfig()
+	// Reads config.json into a new Config. Throws on a missing file or invalid JSON, so a failed
+	// reload leaves the active settings untouched. config.json is plain JSON: no comments.
+	Config ReadConfig()
 	{
+		Config cfg;
 		const fs::path path = PluginDir() / "config.json";
 		std::ifstream file(path);
 		if (!file.is_open())
@@ -362,45 +367,46 @@ namespace
 		file >> j;
 
 		const auto& m = j.at("Mysql");
-		g_cfg.db.host = m.value("Host", "127.0.0.1");
-		g_cfg.db.port = m.value("Port", 3306u);
-		g_cfg.db.user = m.value("User", "");
-		g_cfg.db.password = m.value("Password", "");
-		g_cfg.db.database = m.value("Database", "playerlogin");
-		g_cfg.db.ssl = m.value("Ssl", false);
+		cfg.db.host = m.value("Host", "127.0.0.1");
+		cfg.db.port = m.value("Port", 3306u);
+		cfg.db.user = m.value("User", "");
+		cfg.db.password = m.value("Password", "");
+		cfg.db.database = m.value("Database", "playerlogin");
+		cfg.db.ssl = m.value("Ssl", false);
 
-		g_cfg.server_key_override = j.value("ServerKeyOverride", "");
+		cfg.server_key_override = j.value("ServerKeyOverride", "");
 
 		if (j.contains("Verification"))
 		{
 			const auto& v = j["Verification"];
-			g_cfg.verify.enabled = v.value("Enabled", true);
-			g_cfg.verify.startup_delay_min = std::max(1, v.value("StartupDelayMinutes", 30));
-			g_cfg.verify.interval_min = std::max(5, v.value("IntervalMinutes", 30));
-			g_cfg.verify.grace_min = std::max(20, v.value("GraceMinutes", 60));
-			g_cfg.verify.stale_entry_days = std::max(0, v.value("StaleEntryDays", 0));
-			g_cfg.verify.max_removals_per_run = std::max(1, v.value("MaxRemovalsPerRun", 25));
-			g_cfg.verify.profile_dir = v.value("ProfileDirectory", "");
+			cfg.verify.enabled = v.value("Enabled", true);
+			cfg.verify.startup_delay_min = std::max(1, v.value("StartupDelayMinutes", 30));
+			cfg.verify.interval_min = std::max(5, v.value("IntervalMinutes", 30));
+			cfg.verify.grace_min = std::max(20, v.value("GraceMinutes", 60));
+			cfg.verify.stale_entry_days = std::max(0, v.value("StaleEntryDays", 0));
+			cfg.verify.max_removals_per_run = std::max(1, v.value("MaxRemovalsPerRun", 25));
+			cfg.verify.profile_dir = v.value("ProfileDirectory", "");
 		}
 
 		if (j.contains("Discord"))
 		{
 			const auto& d = j["Discord"];
-			g_cfg.discord.logins = d.value("LoginsWebhook", "");
-			g_cfg.discord.transfers = d.value("TransfersWebhook", "");
-			g_cfg.discord.duplicates = d.value("DuplicatesWebhook", "");
-			g_cfg.discord.moderation = d.value("ModerationWebhook", "");
+			cfg.discord.logins = d.value("LoginsWebhook", "");
+			cfg.discord.transfers = d.value("TransfersWebhook", "");
+			cfg.discord.duplicates = d.value("DuplicatesWebhook", "");
+			cfg.discord.moderation = d.value("ModerationWebhook", "");
 		}
 
 		if (j.contains("Messages"))
 		{
 			const auto& msg = j["Messages"];
-			g_cfg.msg.creation_blocked = msg.value("CreationBlocked", g_cfg.msg.creation_blocked);
-			g_cfg.msg.duplicate_login = msg.value("DuplicateLogin", g_cfg.msg.duplicate_login);
-			g_cfg.msg.banned_permanent = msg.value("BannedPermanent", g_cfg.msg.banned_permanent);
-			g_cfg.msg.banned_timed = msg.value("BannedTimed", g_cfg.msg.banned_timed);
-			g_cfg.msg.record_loading = msg.value("RecordLoading", g_cfg.msg.record_loading);
+			cfg.msg.creation_blocked = msg.value("CreationBlocked", cfg.msg.creation_blocked);
+			cfg.msg.duplicate_login = msg.value("DuplicateLogin", cfg.msg.duplicate_login);
+			cfg.msg.banned_permanent = msg.value("BannedPermanent", cfg.msg.banned_permanent);
+			cfg.msg.banned_timed = msg.value("BannedTimed", cfg.msg.banned_timed);
+			cfg.msg.record_loading = msg.value("RecordLoading", cfg.msg.record_loading);
 		}
+		return cfg;
 	}
 
 	// -----------------------------------------------------------------------------------------
@@ -1301,6 +1307,15 @@ namespace
 	const char* kHookLogout = "AShooterGameMode.Logout(AController*)";
 	const char* kHookUpload = "AShooterPlayerController.ServerUploadCurrentCharacterAndItems_Implementation(UPrimalInventoryComponent*,int)";
 
+	// ProfileDirectory from the config, or <server>\ShooterGame\Saved\SavedArks\<MapName>.
+	fs::path ResolveProfileDir()
+	{
+		fs::path dir = !g_cfg.verify.profile_dir.empty()
+			? fs::path(g_cfg.verify.profile_dir)
+			: fs::path(AsaApi::Tools::GetCurrentDir()) / ".." / ".." / "Saved" / "SavedArks" / MapName();
+		return dir.lexically_normal();
+	}
+
 	// Server identity and profile folder need the world, which isn't ready during Plugin_Init
 	// on a cold start. This runs once the world exists.
 	void InitWorldDependent()
@@ -1312,11 +1327,7 @@ namespace
 		else
 			g_server_key = MapName();
 
-		if (!g_cfg.verify.profile_dir.empty())
-			g_profile_dir = fs::path(g_cfg.verify.profile_dir);
-		else
-			g_profile_dir = fs::path(AsaApi::Tools::GetCurrentDir()) / ".." / ".." / "Saved" / "SavedArks" / MapName();
-		g_profile_dir = g_profile_dir.lexically_normal();
+		g_profile_dir = ResolveProfileDir();
 
 		Log::GetLog()->info("PlayerLogin: this server is '{}', profiles in {}", g_server_key, g_profile_dir.string());
 
@@ -1361,58 +1372,178 @@ namespace
 	}
 }
 
+namespace
+{
+	const wchar_t* kReloadCommand = L"playerlogin.reload";
+
+	void ApplyDiscordUrls()
+	{
+		g_discord.SetUrl(Channel::Logins, g_cfg.discord.logins);
+		g_discord.SetUrl(Channel::Transfers, g_cfg.discord.transfers);
+		g_discord.SetUrl(Channel::Duplicates, g_cfg.discord.duplicates);
+		g_discord.SetUrl(Channel::Moderation, g_cfg.discord.moderation);
+	}
+
+	// Everything that needs a valid config: database worker, hooks, commands and timers.
+	void StartPlugin()
+	{
+		ApplyDiscordUrls();
+
+		g_worker = std::make_unique<DbWorker>(g_cfg.db);
+		g_worker->Start();
+		g_worker->Post([](Db& db)
+		{
+			for (const char* sql : kSchema)
+			{
+				if (db.Exec(sql) < 0)
+					Log::GetLog()->error("PlayerLogin: schema setup failed: {}", db.LastError());
+			}
+		});
+
+		g_alive = true;
+
+		auto& hooks = AsaApi::GetHooks();
+		hooks.SetHook(kHookLogin, &Hook_AShooterGameMode_HandleNewPlayer_Implementation, &AShooterGameMode_HandleNewPlayer_Implementation_original);
+		hooks.SetHook(kHookLogout, &Hook_AShooterGameMode_Logout, &AShooterGameMode_Logout_original);
+		hooks.SetHook(kHookCreate, &Hook_AShooterPlayerState_ServerRequestCreateNewPlayer_Implementation, &AShooterPlayerState_ServerRequestCreateNewPlayer_Implementation_original);
+		hooks.SetHook(kHookUpload, &Hook_AShooterPlayerController_ServerUploadCurrentCharacterAndItems_Implementation, &AShooterPlayerController_ServerUploadCurrentCharacterAndItems_Implementation_original);
+
+		auto& commands = AsaApi::GetCommands();
+		for (const wchar_t* c : kCommands)
+		{
+			commands.AddRconCommand(c, &OnRcon);
+			commands.AddConsoleCommand(c, &OnConsole);
+		}
+
+		WaitForWorld();
+	}
+
+	bool SameDb(const DbConfig& a, const DbConfig& b)
+	{
+		return a.host == b.host && a.port == b.port && a.user == b.user && a.password == b.password
+			&& a.database == b.database && a.ssl == b.ssl;
+	}
+
+	struct ReloadResult
+	{
+		bool ok;
+		std::string text;
+	};
+
+	// Re-reads config.json. Messages, Discord webhooks and the verification rules apply at once.
+	// Mysql, ServerKeyOverride, StartupDelayMinutes and IntervalMinutes keep their running values
+	// and are named in the reply as needing a restart. A config.json that fails to parse changes
+	// nothing. If the plugin didn't start because config.json was broken at boot, a successful
+	// reload starts it.
+	ReloadResult Reload()
+	{
+		Config next;
+		try
+		{
+			next = ReadConfig();
+		}
+		catch (const std::exception& e)
+		{
+			Log::GetLog()->error("Config reload failed: {}", e.what());
+			return { false, std::string("PlayerLogin: reload failed - ") + e.what()
+				+ (g_alive ? " (previous settings still active)" : "") };
+		}
+
+		if (!g_alive)
+		{
+			g_cfg = std::move(next);
+			StartPlugin();
+			Log::GetLog()->info("PlayerLogin: config loaded, plugin started");
+			return { true, "PlayerLogin: config loaded, plugin started" };
+		}
+
+		std::vector<std::string> restart;
+		if (!SameDb(next.db, g_cfg.db))
+			restart.emplace_back("Mysql");
+		if (next.server_key_override != g_cfg.server_key_override)
+			restart.emplace_back("ServerKeyOverride");
+		if (next.verify.startup_delay_min != g_cfg.verify.startup_delay_min)
+			restart.emplace_back("StartupDelayMinutes");
+		if (next.verify.interval_min != g_cfg.verify.interval_min)
+			restart.emplace_back("IntervalMinutes");
+
+		const bool dir_changed = next.verify.profile_dir != g_cfg.verify.profile_dir;
+
+		g_cfg.msg = next.msg;
+		g_cfg.discord = next.discord;
+		g_cfg.verify.enabled = next.verify.enabled;
+		g_cfg.verify.grace_min = next.verify.grace_min;
+		g_cfg.verify.stale_entry_days = next.verify.stale_entry_days;
+		g_cfg.verify.max_removals_per_run = next.verify.max_removals_per_run;
+		g_cfg.verify.profile_dir = next.verify.profile_dir;
+		ApplyDiscordUrls();
+
+		if (dir_changed && !g_server_key.empty())
+		{
+			g_profile_dir = ResolveProfileDir();
+			Log::GetLog()->info("PlayerLogin: profiles now read from {}", g_profile_dir.string());
+		}
+
+		std::string text = "PlayerLogin: config reloaded";
+		if (!restart.empty())
+		{
+			text += ". Restart the server to apply:";
+			for (size_t i = 0; i < restart.size(); ++i)
+				text += (i ? ", " : " ") + restart[i];
+		}
+		Log::GetLog()->info("{}", text);
+		return { true, text };
+	}
+
+	void OnReloadRcon(RCONClientConnection* conn, RCONPacket* packet, UWorld*)
+	{
+		FString reply = ToF(Reload().text);
+		conn->SendMessageW(packet->Id, 0, &reply);
+	}
+
+	void OnReloadConsole(APlayerController* player, FString*, bool)
+	{
+		auto* pc = static_cast<AShooterPlayerController*>(player);
+		if (!pc || !pc->bIsAdmin().Get())
+			return;
+		const ReloadResult r = Reload();
+		const FString msg = ToF(r.text);
+		AsaApi::GetApiUtils().SendServerMessage(pc,
+			r.ok ? FLinearColor(0.4f, 1.0f, 0.4f, 1.0f) : FLinearColor(1.0f, 0.3f, 0.3f, 1.0f), L"{}", *msg);
+	}
+}
+
 extern "C" __declspec(dllexport) void Plugin_Init()
 {
-	Log::Get().Init("PlayerLogin");
+	Log::Get().Init(PROJECT_NAME);
+
+	// Registered first and kept even if config.json is broken, so it can be fixed without a restart.
+	auto& commands = AsaApi::GetCommands();
+	commands.AddRconCommand(kReloadCommand, &OnReloadRcon);
+	commands.AddConsoleCommand(kReloadCommand, &OnReloadConsole);
 
 	try
 	{
-		LoadConfig();
+		g_cfg = ReadConfig();
 	}
 	catch (const std::exception& e)
 	{
-		Log::GetLog()->critical("PlayerLogin: config error, plugin disabled: {}", e.what());
+		Log::GetLog()->critical("PlayerLogin: config error, plugin not started: {}", e.what());
+		Log::GetLog()->critical("PlayerLogin: fix config.json and run playerlogin.reload");
 		return;
 	}
 
-	g_discord.SetUrl(Channel::Logins, g_cfg.discord.logins);
-	g_discord.SetUrl(Channel::Transfers, g_cfg.discord.transfers);
-	g_discord.SetUrl(Channel::Duplicates, g_cfg.discord.duplicates);
-	g_discord.SetUrl(Channel::Moderation, g_cfg.discord.moderation);
-
-	g_worker = std::make_unique<DbWorker>(g_cfg.db);
-	g_worker->Start();
-	g_worker->Post([](Db& db)
-	{
-		for (const char* sql : kSchema)
-		{
-			if (db.Exec(sql) < 0)
-				Log::GetLog()->error("PlayerLogin: schema setup failed: {}", db.LastError());
-		}
-	});
-
-	g_alive = true;
-
-	auto& hooks = AsaApi::GetHooks();
-	hooks.SetHook(kHookLogin, &Hook_AShooterGameMode_HandleNewPlayer_Implementation, &AShooterGameMode_HandleNewPlayer_Implementation_original);
-	hooks.SetHook(kHookLogout, &Hook_AShooterGameMode_Logout, &AShooterGameMode_Logout_original);
-	hooks.SetHook(kHookCreate, &Hook_AShooterPlayerState_ServerRequestCreateNewPlayer_Implementation, &AShooterPlayerState_ServerRequestCreateNewPlayer_Implementation_original);
-	hooks.SetHook(kHookUpload, &Hook_AShooterPlayerController_ServerUploadCurrentCharacterAndItems_Implementation, &AShooterPlayerController_ServerUploadCurrentCharacterAndItems_Implementation_original);
-
-	auto& commands = AsaApi::GetCommands();
-	for (const wchar_t* c : kCommands)
-	{
-		commands.AddRconCommand(c, &OnRcon);
-		commands.AddConsoleCommand(c, &OnConsole);
-	}
-
-	WaitForWorld();
+	StartPlugin();
 }
 
 extern "C" __declspec(dllexport) void Plugin_Unload()
 {
+	auto& commands = AsaApi::GetCommands();
+	commands.RemoveRconCommand(kReloadCommand);
+	commands.RemoveConsoleCommand(kReloadCommand);
+
 	if (!g_alive)
-		return; // config failed at load: nothing was hooked or registered
+		return; // never started (config error): nothing else was hooked or registered
 	g_alive = false;
 
 	auto& hooks = AsaApi::GetHooks();
@@ -1421,7 +1552,6 @@ extern "C" __declspec(dllexport) void Plugin_Unload()
 	hooks.DisableHook(kHookCreate, &Hook_AShooterPlayerState_ServerRequestCreateNewPlayer_Implementation);
 	hooks.DisableHook(kHookUpload, &Hook_AShooterPlayerController_ServerUploadCurrentCharacterAndItems_Implementation);
 
-	auto& commands = AsaApi::GetCommands();
 	for (const wchar_t* c : kCommands)
 	{
 		commands.RemoveRconCommand(c);
