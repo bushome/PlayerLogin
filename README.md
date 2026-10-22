@@ -1,10 +1,30 @@
-# PlayerLogin
-
+```
+██████╗ ██╗      █████╗ ██╗   ██╗███████╗██████╗ 
+██╔══██╗██║     ██╔══██╗╚██╗ ██╔╝██╔════╝██╔══██╗
+██████╔╝██║     ███████║ ╚████╔╝ █████╗  ██████╔╝
+██╔═══╝ ██║     ██╔══██║  ╚██╔╝  ██╔══╝  ██╔══██╗
+██║     ███████╗██║  ██║   ██║   ███████╗██║  ██║
+╚═╝     ╚══════╝╚═╝  ╚═╝   ╚═╝   ╚══════╝╚═╝  ╚═╝
+                                                 
+██╗      ██████╗  ██████╗ ██╗███╗   ██╗          
+██║     ██╔═══██╗██╔════╝ ██║████╗  ██║          
+██║     ██║   ██║██║  ███╗██║██╔██╗ ██║          
+██║     ██║   ██║██║   ██║██║██║╚██╗██║          
+███████╗╚██████╔╝╚██████╔╝██║██║ ╚████║          
+╚══════╝ ╚═════╝  ╚═════╝ ╚═╝╚═╝  ╚═══╝   
+  ooo,    .---.
+ o`  o   /    |\________________
+o`   'oooo()  | ________   _   _)
+`oo   o` \    |/        | | | |
+  `ooo'   `---'         "-" |_|
+                                
+```
 Cluster character location tracking for ARK servers: one character per player across the
 cluster, duplicate prevention, timed/permanent bans and `LastSeen` lookups, backed by MariaDB.
 Discord webhook logging for logins, transfers, blocked duplicates and moderation.
 
-**Status: complete.** Both versions are tested and running in production.
+**Status: complete.** Both versions are tested and running in production. This software will receive only bug fixes for future game state version updates.
+No new feature sets will be added beyond what is presented here. 
 
 | Folder | Game | Server API (submodule) | Player key |
 |---|---|---|---|
