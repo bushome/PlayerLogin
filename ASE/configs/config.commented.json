@@ -5,8 +5,8 @@
 // copy values from here into it rather than copying this file over it.
 //
 // After editing config.json, run playerlogin.reload (RCON, or the in-game console as an admin).
-// Most settings apply at once; Mysql, ServerKeyOverride, StartupDelayMinutes and IntervalMinutes
-// need a server restart, and the reload reply names any of those that changed. If config.json has
+// Most settings apply at once; Mysql, StartupDelayMinutes and IntervalMinutes need a server
+// restart, and the reload reply names any of those that changed. If config.json has
 // a mistake, the previous settings stay active and the error is shown and written to the plugin log.
 // A setting left out of config.json falls back to the value shown here.
 {
@@ -34,12 +34,6 @@
     // database server has TLS set up.
     "Ssl": false
   },
-
-  // The name this server is recorded under. Empty uses -ServerKey= from the command line, then
-  // falls back to the map name. Set it only if two servers would otherwise get the same name.
-  // Every server must have a different name, and a server's name must not change once players
-  // are recorded on it (a renamed server reads as "character is on another server").
-  "ServerKeyOverride": "",
 
   // Removes records whose character no longer exists in the save, for example after a profile
   // was deleted or a save was restored. Each server checks only the records recorded on itself,

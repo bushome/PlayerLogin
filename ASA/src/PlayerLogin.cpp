@@ -81,7 +81,6 @@ namespace
 	struct Config
 	{
 		DbConfig db;
-		std::string server_key_override;
 		VerifyConfig verify;
 		DiscordConfig discord;
 		Messages msg;
@@ -373,8 +372,6 @@ namespace
 		cfg.db.password = m.value("Password", "");
 		cfg.db.database = m.value("Database", "playerlogin");
 		cfg.db.ssl = m.value("Ssl", false);
-
-		cfg.server_key_override = j.value("ServerKeyOverride", "");
 
 		if (j.contains("Verification"))
 		{
@@ -1320,9 +1317,7 @@ namespace
 	// on a cold start. This runs once the world exists.
 	void InitWorldDependent()
 	{
-		if (!g_cfg.server_key_override.empty())
-			g_server_key = g_cfg.server_key_override;
-		else if (const std::string key = ServerKeyFromCommandLine(); !key.empty())
+		if (const std::string key = ServerKeyFromCommandLine(); !key.empty())
 			g_server_key = key;
 		else
 			g_server_key = MapName();
@@ -1431,10 +1426,9 @@ namespace
 	};
 
 	// Re-reads config.json. Messages, Discord webhooks and the verification rules apply at once.
-	// Mysql, ServerKeyOverride, StartupDelayMinutes and IntervalMinutes keep their running values
-	// and are named in the reply as needing a restart. A config.json that fails to parse changes
-	// nothing. If the plugin didn't start because config.json was broken at boot, a successful
-	// reload starts it.
+	// Mysql, StartupDelayMinutes and IntervalMinutes keep their running values and are named in
+	// the reply as needing a restart. A config.json that fails to parse changes nothing. If the
+	// plugin didn't start because config.json was broken at boot, a successful reload starts it.
 	ReloadResult Reload()
 	{
 		Config next;
@@ -1460,8 +1454,6 @@ namespace
 		std::vector<std::string> restart;
 		if (!SameDb(next.db, g_cfg.db))
 			restart.emplace_back("Mysql");
-		if (next.server_key_override != g_cfg.server_key_override)
-			restart.emplace_back("ServerKeyOverride");
 		if (next.verify.startup_delay_min != g_cfg.verify.startup_delay_min)
 			restart.emplace_back("StartupDelayMinutes");
 		if (next.verify.interval_min != g_cfg.verify.interval_min)

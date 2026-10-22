@@ -7,7 +7,6 @@
     "Database": "playerlogin",
     "Ssl": false
   },
-  "ServerKeyOverride": "",
   "Verification": {
     "Enabled": true,
     "StartupDelayMinutes": 30,

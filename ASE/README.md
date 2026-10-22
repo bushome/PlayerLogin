@@ -34,7 +34,7 @@ After editing `config.json`, run `playerlogin.reload` (RCON, or the in-game cons
 
 - **Applied at once:** `Messages`, `Discord`, and `Verification` `Enabled`, `GraceMinutes`, `StaleEntryDays`,
   `MaxRemovalsPerRun`, `ProfileDirectory`.
-- **Need a server restart:** `Mysql`, `ServerKeyOverride`, `StartupDelayMinutes`, `IntervalMinutes`. The reload keeps their
+- **Need a server restart:** `Mysql`, `StartupDelayMinutes`, `IntervalMinutes`. The reload keeps their
   running values and names any that changed in its reply.
 - If `config.json` has a mistake, nothing changes: the reply and the plugin log show the error and the previous settings stay active.
 - If `config.json` was broken when the server started, the plugin doesn't start but `playerlogin.reload` still works:
@@ -50,12 +50,6 @@ After editing `config.json`, run `playerlogin.reload` (RCON, or the in-game cons
 | `Password` | *(empty)* | Database password. Keep real credentials out of version control. |
 | `Database` | `playerlogin` | Database name. The plugin creates its tables on first start. |
 | `Ssl` | `false` | `false`: plain connection (local or LAN MariaDB without TLS). `true`: require TLS, accepting a self-signed server certificate. MariaDB Connector/C 3.4+ requires TLS by default, so leave this `false` unless your server has TLS set up. |
-
-### `ServerKeyOverride`
-
-| Default | Description |
-|---|---|
-| *(empty)* | Name this server is recorded under. Empty uses `-ServerKey=` from the command line, then the map name. Set it only if two servers would otherwise resolve to the same name. See [Server identity](#server-identity). |
 
 ### `Verification`
 
@@ -97,7 +91,7 @@ Players are identified by SteamID64 in every command and table.
 
 ## Server identity
 
-`ServerKeyOverride` (config) → `-ServerKey=` on the command line → map name.
+`-ServerKey=` on the command line, or the map name if it isn't set. There is no config setting for it.
 Each server must resolve to a distinct value, and it must not change once players are recorded
 against it (a renamed key reads as "character is on another server").
 
