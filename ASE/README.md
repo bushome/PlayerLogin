@@ -22,6 +22,68 @@ backed by MariaDB. ASE port of the ASA plugin. Same design and database layout; 
    Confirm the key is what you expect and the path is the folder holding that map's `.arkprofile` files.
    If the path is wrong, set `Verification.ProfileDirectory`.
 
+## Configuration
+
+`config.json` sits next to `PlayerLogin.dll`. JSON can't hold comments, so every field is described here, and
+`Plugin/config.commented.jsonc` is the same file with a comment on every line (reference only; the plugin never reads it).
+It's read when the plugin loads: after editing, reload the plugin or restart the server.
+Missing fields fall back to the defaults shown.
+
+### `Mysql`
+
+| Field | Default | Description |
+|---|---|---|
+| `Host` | `127.0.0.1` | MariaDB host name or IP. |
+| `Port` | `3306` | MariaDB port. |
+| `User` | *(empty)* | Database user. |
+| `Password` | *(empty)* | Database password. Keep real credentials out of version control. |
+| `Database` | `playerlogin` | Database name. The plugin creates its tables on first start. |
+| `Ssl` | `false` | `false`: plain connection (local or LAN MariaDB without TLS). `true`: require TLS, accepting a self-signed server certificate. MariaDB Connector/C 3.4+ requires TLS by default, so leave this `false` unless your server has TLS set up. |
+
+### `ServerKeyOverride`
+
+| Default | Description |
+|---|---|
+| *(empty)* | Name this server is recorded under. Empty uses `-ServerKey=` from the command line, then the map name. Set it only if two servers would otherwise resolve to the same name. See [Server identity](#server-identity). |
+
+### `Verification`
+
+| Field | Default | Minimum | Description |
+|---|---|---|---|
+| `Enabled` | `true` | | Turns the profile check on or off. |
+| `StartupDelayMinutes` | `30` | `1` | Wait after boot before the first check, so the save has finished loading. |
+| `IntervalMinutes` | `30` | `5` | Time between checks. |
+| `GraceMinutes` | `60` | `20` | A record must be untouched this long before it can be removed. Keeps recent logouts and transfers safe. |
+| `StaleEntryDays` | `0` | `0` | `0` = off (recommended). Otherwise a record untouched this many days stops locking the player. See [Verification](#verification-owning-server-only). |
+| `MaxRemovalsPerRun` | `25` | `1` | Most records one check may remove. Limits the damage from a wrong profile path or a half-restored save. |
+| `ProfileDirectory` | *(empty)* | | Folder holding this map's `.arkprofile` files. Empty = detected automatically (ASE: `Saved\SavedArks`, or `Saved\SavedArks\<MapName>` if that folder holds profiles). Check the startup log line and set this only if the detected path is wrong. |
+
+### `Discord`
+
+| Field | Default | Description |
+|---|---|---|
+| `LoginsWebhook` | *(empty)* | Joined, Left, New character created. |
+| `TransfersWebhook` | *(empty)* | Character uploaded, Transfer arrived. |
+| `DuplicatesWebhook` | *(empty)* | Creation blocked, Duplicate login blocked, Record removed by verification. |
+| `ModerationWebhook` | *(empty)* | Ban, Unban, Record reset, Banned player kicked. |
+
+Each field takes a Discord channel webhook URL. Empty turns that channel off; several fields can share one URL.
+See [Discord logging](#discord-logging).
+
+### `Messages`
+
+Text shown to players. Placeholders are filled in by the plugin.
+
+| Field | Placeholders | Shown when |
+|---|---|---|
+| `CreationBlocked` | `{server}` | They try to create a character while their record is on another server. |
+| `DuplicateLogin` | `{server}` | They log in with a copy of their character on a server other than the recorded one. |
+| `BannedPermanent` | `{reason}` | A permanently banned player joins, or is banned while online. |
+| `BannedTimed` | `{expires}`, `{reason}` | A player with a timed ban joins, or is banned while online. `{expires}` is in UTC. |
+| `RecordLoading` | | They try to create a character before their record has loaded (database slow or unreachable). |
+
+Players are identified by SteamID64 in every command and table.
+
 ## Server identity
 
 `ServerKeyOverride` (config) → `-ServerKey=` on the command line → map name.

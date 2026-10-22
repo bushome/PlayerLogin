@@ -1,0 +1,69 @@
+// PlayerLogin (ASA): commented reference copy of config.json.
+// The plugin reads only config.json and does not read this file.
+// Copy values from here into config.json; JSON itself cannot hold comments.
+// config.json is read when the plugin loads: reload the plugin or restart the server after editing it.
+// Any field left out of config.json falls back to the default shown here.
+{
+  // MariaDB connection. Every server in the cluster must point at the same database.
+  "Mysql": {
+    "Host": "127.0.0.1",        // MariaDB host name or IP
+    "Port": 3306,               // MariaDB port
+    "User": "playerlogin",      // database user
+    "Password": "change-me",    // database password; keep real credentials out of version control
+    "Database": "playerlogin",  // database name; the plugin creates its tables on first start
+    "Ssl": false                // false = plain connection (local/LAN MariaDB without TLS)
+                                // true  = require TLS, accepting a self-signed server certificate
+                                // (MariaDB Connector/C 3.4+ requires TLS by default, so keep false unless TLS is set up)
+  },
+
+  // Name this server is recorded under. Empty = -ServerKey= from the command line, then the map name.
+  // Each server must resolve to a distinct name, and it must not change once players are recorded on it.
+  "ServerKeyOverride": "",
+
+  // Removes records whose character no longer exists in this server's save.
+  // Each server checks only the records recorded against itself.
+  "Verification": {
+    "Enabled": true,            // turn the check on or off
+    "StartupDelayMinutes": 30,  // wait after boot before the first check (minimum 1)
+    "IntervalMinutes": 30,      // time between checks (minimum 5)
+    "GraceMinutes": 60,         // record must be untouched this long before it can be removed (minimum 20)
+    "StaleEntryDays": 0,        // 0 = off (recommended). Otherwise a record untouched this many days stops
+                                // locking the player, which lets a returning player create a second character.
+    "MaxRemovalsPerRun": 25,    // most records one check may remove (guards against a wrong path or half-restored save)
+    "ProfileDirectory": ""      // folder holding this map's .arkprofile files. Empty = detected automatically:
+                                // Saved\SavedArks\<MapName>_WP
+                                // Check the startup log line and set this only if the detected path is wrong.
+  },
+
+  // Discord channel webhook URLs. Empty turns that channel off; several fields can share one URL.
+  // Timestamps in posts are always UTC.
+  "Discord": {
+    "LoginsWebhook": "",        // Joined, Left, New character created
+    "TransfersWebhook": "",     // Character uploaded, Transfer arrived
+    "DuplicatesWebhook": "",    // Creation blocked, Duplicate login blocked, Record removed by verification
+    "ModerationWebhook": ""     // Ban, Unban, Record reset, Banned player kicked
+  },
+
+  // Text shown to players. Placeholders in braces are filled in by the plugin.
+  "Messages": {
+    // {server} = server the character is recorded on. Shown when they try to create a character elsewhere.
+    "CreationBlocked": "Your character was last seen on {server}. Log in there to play it.",
+    // {server} = recorded server. Shown when they log in with a copy of their character on another server.
+    "DuplicateLogin": "Your character is registered on {server}. You can only log in with it there.",
+    // {reason} = ban reason. Shown to a permanently banned player.
+    "BannedPermanent": "You are banned from this cluster. Reason: {reason}",
+    // {expires} = ban end time in UTC, {reason} = ban reason. Shown to a player with a timed ban.
+    "BannedTimed": "You are banned until {expires} UTC. Reason: {reason}",
+    // Shown if they try to create a character before their record has loaded (database slow or unreachable).
+    "RecordLoading": "Checking your character record. Try again in a moment."
+  }
+}
+
+// Commands (RCON and admin console); <id> is the player's EOS ID:
+//   playerlogin.ban <id> <hours> <reason>   timed ban; 0 hours = permanent
+//   playerlogin.unban <id>
+//   playerlogin.LastSeen <id>
+//   playerlogin.reset <id>                  next server they log into with a character becomes their record
+//
+// Exclusions (servers where characters aren't locked or recorded; bans still apply), picked up within 60 s:
+//   INSERT INTO exclusions (server_key, note) VALUES ('TestServer', 'admin test box');
