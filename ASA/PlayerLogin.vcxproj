@@ -87,7 +87,9 @@ copy /y "$(TargetDir)$(TargetFileName)" "$(TargetDir)PlayerLogin\"
 copy /y "$(TargetDir)$(TargetName).pdb" "$(TargetDir)PlayerLogin\"
 copy /y "$(ProjectDir)configs\PluginInfo.json" "$(TargetDir)PlayerLogin\"
 copy /y "$(ProjectDir)configs\config.json" "$(TargetDir)PlayerLogin\"
-copy /y "$(ProjectDir)configs\config.commented.json" "$(TargetDir)PlayerLogin\"</Command>
+copy /y "$(ProjectDir)configs\config.commented.json" "$(TargetDir)PlayerLogin\"
+copy /y "$(SolutionDir)..\THIRD-PARTY-NOTICES.md" "$(TargetDir)PlayerLogin\"
+copy /y "$(SolutionDir)..\LICENSE-LGPL-2.1.txt" "$(TargetDir)PlayerLogin\"</Command>
       <Message>Assembling out\PlayerLogin\ plugin folder</Message>
     </PostBuildEvent>
   </ItemDefinitionGroup>

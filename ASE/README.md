@@ -16,7 +16,9 @@ backed by MariaDB. ASE port of the ASA plugin. Same design and database layout; 
    ```
    Use `'playerlogin'@'<ip>'` instead of `localhost` for servers on other machines (you run `skip-name-resolve`).
 2. Copy the contents of `ASE/out/PlayerLogin/` (from the build) into `ShooterGame/Binaries/Win64/ArkApi/Plugins/PlayerLogin/` on every ASE server:
-   `PlayerLogin.dll`, `PlayerLogin.pdb`, `config.json`, `config.commented.json`, `PluginInfo.json`.
+   `PlayerLogin.dll`, `PlayerLogin.pdb`, `config.json`, `config.commented.json`, `PluginInfo.json`,
+   `THIRD-PARTY-NOTICES.md` and `LICENSE-LGPL-2.1.txt`. Keep the two notice files with the DLL when
+   redistributing the plugin.
 3. Set the MySQL fields in `config.json`. Every server must point at the same database.
 4. Start the server and check the plugin log for this line (ASE keeps profiles directly in `Saved\SavedArks`):
    `PlayerLogin: this server is '<key>', profiles in <path>`

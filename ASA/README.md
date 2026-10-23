@@ -16,7 +16,9 @@ backed by MariaDB. Replaces the parts of Lethal Login this cluster uses.
    ```
    Use `'playerlogin'@'<ip>'` instead of `localhost` for servers on other machines (you run `skip-name-resolve`).
 2. Copy the contents of `ASA/out/PlayerLogin/` (from the build) into `ArkApi/Plugins/PlayerLogin/` on every server:
-   `PlayerLogin.dll`, `PlayerLogin.pdb`, `config.json`, `config.commented.json`, `PluginInfo.json`.
+   `PlayerLogin.dll`, `PlayerLogin.pdb`, `config.json`, `config.commented.json`, `PluginInfo.json`,
+   `THIRD-PARTY-NOTICES.md` and `LICENSE-LGPL-2.1.txt`. Keep the two notice files with the DLL when
+   redistributing the plugin.
 3. Set the MySQL fields in `config.json`. Every server must point at the same database.
 4. Start the server and check the plugin log for this line:
    `PlayerLogin: this server is '<key>', profiles in <path>`
