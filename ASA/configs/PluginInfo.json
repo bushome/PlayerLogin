@@ -1,0 +1,7 @@
+{
+  "FullName": "PlayerLogin",
+  "Description": "Cluster character location tracking: one character per player, duplicate prevention, bans and LastSeen lookups over MariaDB.",
+  "Version": 1.0,
+  "MinApiVersion": 2.03,
+  "Dependencies": []
+}

@@ -1,0 +1,6 @@
+[submodule "ASA/extern/AsaApi"]
+	path = ASA/extern/AsaApi
+	url = https://github.com/ArkServerApi/AsaApi.git
+[submodule "ASE/extern/AseApi"]
+	path = ASE/extern/AseApi
+	url = https://github.com/ArkServerApi/AseApi.git
