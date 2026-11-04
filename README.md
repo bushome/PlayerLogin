@@ -47,3 +47,8 @@ Each game's cluster uses its own MariaDB database. The table layout is the same 
 player key column (`eos_id` on ASA, `steam_id` on ASE). `src/Database.h` is the same in both folders;
 `src/PlayerLogin.cpp`, `src/Discord.h` and the project files differ by API. Install, commands,
 configuration, behavior and build steps are in each folder's README.
+
+## Development
+
+Developed with AI assistance (Claude). Every change was reviewed and tested on a dedicated test server
+before going live.
