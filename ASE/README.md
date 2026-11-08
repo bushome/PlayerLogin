@@ -8,6 +8,8 @@ backed by MariaDB. ASE port of the ASA plugin. Same design and database layout; 
 
 ## Install
 
+**VC++ runtime:** built with the v145 toolset (Visual Studio 2026) and `_DISABLE_CONSTEXPR_MUTEX_CONSTRUCTOR`, so it also runs on servers with an older Visual C++ runtime. If the server crashes inside `std::mutex` or reports a missing `msvcp140.dll` entry point after installing, install the current Visual C++ Redistributable (x64).
+
 1. Create the database and a user (the plugin creates its tables itself):
    ```sql
    CREATE DATABASE IF NOT EXISTS playerlogin CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -175,6 +177,8 @@ Reset returning players by hand (`playerlogin.reset`), and when retiring a map c
 `DELETE FROM characters WHERE server_key='OldMap';`
 
 ## Build
+
+**Shared API checkout (optional):** the project builds against `extern\AseApi` by default. To build several plugins against one shared AseApi checkout instead, set the MSBuild property `AseApiDir` to that folder, for example in a `Directory.Build.props` placed above the repo; the submodule then doesn't need to be checked out.
 
 `ASE/` is a self-contained Visual Studio solution. The server API is the
 [ArkServerApi (AseApi)](https://github.com/ArkServerApi/AseApi) submodule at `ASE/extern/AseApi`, which ships a prebuilt

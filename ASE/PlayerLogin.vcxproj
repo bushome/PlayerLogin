@@ -30,6 +30,11 @@
     <ProjectName>PlayerLogin</ProjectName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <!-- AseApi location: a shared checkout when AseApiDir is set (e.g. by a Directory.Build.props above the repo), otherwise the extern\AseApi submodule. -->
+  <PropertyGroup>
+    <AseApiDir Condition="'$(AseApiDir)' == ''">$(SolutionDir)extern\AseApi\</AseApiDir>
+    <AseApiDir>$([MSBuild]::EnsureTrailingSlash('$(AseApiDir)'))</AseApiDir>
+  </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
@@ -61,12 +66,12 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
       <!-- UNICODE/_UNICODE come from CharacterSet=Unicode. ARK_GAME is defined by AseApi's Ark.h. -->
-      <PreprocessorDefinitions>PROJECT_NAME="$(ProjectName)";NDEBUG;_WINDOWS;_USRDLL;NOMINMAX;_SILENCE_ALL_CXX17_DEPRECATION_WARNINGS;_SILENCE_ALL_CXX20_DEPRECATION_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>PROJECT_NAME="$(ProjectName)";NDEBUG;_WINDOWS;_USRDLL;NOMINMAX;_SILENCE_ALL_CXX17_DEPRECATION_WARNINGS;_SILENCE_ALL_CXX20_DEPRECATION_WARNINGS;_DISABLE_CONSTEXPR_MUTEX_CONSTRUCTOR;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <AdditionalOptions>/utf-8 /Zc:__cplusplus /bigobj %(AdditionalOptions)</AdditionalOptions>
-      <AdditionalIncludeDirectories>$(SolutionDir)extern\AseApi\version\Core\Public\;$(ProjectDir)src\</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(AseApiDir)version\Core\Public\;$(ProjectDir)src\</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -75,7 +80,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
       <!-- libmariadb (static) needs ws2_32, secur32, crypt32, shlwapi and bcrypt; vcpkg links libmariadb itself. -->
-      <AdditionalDependencies>$(SolutionDir)extern\AseApi\out_lib\ArkApi.lib;ws2_32.lib;secur32.lib;crypt32.lib;shlwapi.lib;bcrypt.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>$(AseApiDir)out_lib\ArkApi.lib;ws2_32.lib;secur32.lib;crypt32.lib;shlwapi.lib;bcrypt.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PreBuildEvent>
       <Command>if exist "$(TargetDir)$(TargetFileName).ArkApi" del /q "$(TargetDir)$(TargetFileName).ArkApi"</Command>
@@ -96,7 +101,7 @@ copy /y "$(SolutionDir)..\LICENSE-LGPL-2.1.txt" "$(TargetDir)PlayerLogin\"</Comm
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <!-- Fail early with a readable message if the AseApi submodule is missing. -->
   <Target Name="CheckAseApi" BeforeTargets="PrepareForBuild">
-    <Error Condition="!Exists('$(SolutionDir)extern\AseApi\version\Core\Public\API\ARK\Ark.h')" Text="AseApi headers not found. Run: git submodule update --init --recursive" />
-    <Error Condition="!Exists('$(SolutionDir)extern\AseApi\out_lib\ArkApi.lib')" Text="ArkApi.lib not found in extern\AseApi\out_lib. It ships in the AseApi repo; run: git submodule update --init --recursive" />
+    <Error Condition="!Exists('$(AseApiDir)version\Core\Public\API\ARK\Ark.h')" Text="AseApi headers not found in $(AseApiDir). Run: git submodule update --init --recursive, or point AseApiDir at a shared AseApi checkout" />
+    <Error Condition="!Exists('$(AseApiDir)out_lib\ArkApi.lib')" Text="ArkApi.lib not found in $(AseApiDir)out_lib. It ships in the AseApi repo; run: git submodule update --init --recursive, or point AseApiDir at a shared AseApi checkout" />
   </Target>
 </Project>

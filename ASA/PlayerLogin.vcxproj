@@ -30,6 +30,11 @@
     <ProjectName>PlayerLogin</ProjectName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <!-- AsaApi location: a shared checkout when AsaApiDir is set (e.g. by a Directory.Build.props above the repo), otherwise the extern\AsaApi submodule. -->
+  <PropertyGroup>
+    <AsaApiDir Condition="'$(AsaApiDir)' == ''">$(SolutionDir)extern\AsaApi\</AsaApiDir>
+    <AsaApiDir>$([MSBuild]::EnsureTrailingSlash('$(AsaApiDir)'))</AsaApiDir>
+  </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
@@ -61,12 +66,12 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
       <!-- UNICODE/_UNICODE come from CharacterSet=Unicode. Don't add WIN32_LEAN_AND_MEAN: AsaApi's Base.h defines it. -->
-      <PreprocessorDefinitions>PROJECT_NAME="$(ProjectName)";NDEBUG;_WINDOWS;_USRDLL;NOMINMAX;_SILENCE_ALL_CXX17_DEPRECATION_WARNINGS;_SILENCE_ALL_CXX20_DEPRECATION_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>PROJECT_NAME="$(ProjectName)";NDEBUG;_WINDOWS;_USRDLL;NOMINMAX;_SILENCE_ALL_CXX17_DEPRECATION_WARNINGS;_SILENCE_ALL_CXX20_DEPRECATION_WARNINGS;_DISABLE_CONSTEXPR_MUTEX_CONSTRUCTOR;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <AdditionalOptions>/utf-8 /Zc:__cplusplus /bigobj %(AdditionalOptions)</AdditionalOptions>
-      <AdditionalIncludeDirectories>$(SolutionDir)extern\AsaApi\AsaApi\Core\Public\;$(SolutionDir)extern\AsaApi\AsaApi\Core\Public\API\UE\;$(ProjectDir)src\</AdditionalIncludeDirectories>
+      <AdditionalOptions>/utf-8 /bigobj %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalIncludeDirectories>$(AsaApiDir)AsaApi\Core\Public\;$(AsaApiDir)AsaApi\Core\Public\API\UE\;$(ProjectDir)src\</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -75,7 +80,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
       <!-- libmariadb (static) needs ws2_32, secur32, crypt32, shlwapi and bcrypt; vcpkg links libmariadb itself. -->
-      <AdditionalDependencies>$(SolutionDir)extern\AsaApi\out_lib\AsaApi.lib;ws2_32.lib;secur32.lib;crypt32.lib;shlwapi.lib;bcrypt.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>$(AsaApiDir)out_lib\AsaApi.lib;ws2_32.lib;secur32.lib;crypt32.lib;shlwapi.lib;bcrypt.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PreBuildEvent>
       <Command>if exist "$(TargetDir)$(TargetFileName).arkapi" del /q "$(TargetDir)$(TargetFileName).arkapi"</Command>
@@ -96,7 +101,7 @@ copy /y "$(SolutionDir)..\LICENSE-LGPL-2.1.txt" "$(TargetDir)PlayerLogin\"</Comm
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <!-- Fail early with a readable message if the AsaApi submodule or its lib is missing. -->
   <Target Name="CheckAsaApi" BeforeTargets="PrepareForBuild">
-    <Error Condition="!Exists('$(SolutionDir)extern\AsaApi\AsaApi\Core\Public\API\ARK\Ark.h')" Text="AsaApi headers not found. Run: git submodule update --init --recursive" />
-    <Error Condition="!Exists('$(SolutionDir)extern\AsaApi\out_lib\AsaApi.lib')" Text="AsaApi.lib not found in extern\AsaApi\out_lib. Build extern\AsaApi\AsaApi.sln (Release, x64), or copy AsaApi.lib from the Lib folder of the AsaApi release zip." />
+    <Error Condition="!Exists('$(AsaApiDir)AsaApi\Core\Public\API\ARK\Ark.h')" Text="AsaApi headers not found in $(AsaApiDir). Run: git submodule update --init --recursive, or point AsaApiDir at a shared AsaApi checkout" />
+    <Error Condition="!Exists('$(AsaApiDir)out_lib\AsaApi.lib')" Text="AsaApi.lib not found in $(AsaApiDir)out_lib. Build $(AsaApiDir)AsaApi.sln (Release, x64), or copy AsaApi.lib from the Lib folder of the AsaApi release zip." />
   </Target>
 </Project>
