@@ -36,21 +36,21 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-## MariaDB Connector/C (libmariadb) 3.4.8
+## MariaDB Connector/C (libmariadb) 3.4.11
 
 https://github.com/mariadb-corporation/mariadb-connector-c
 
-Statically linked into the plugin DLL (built through vcpkg, port `libmariadb` 3.4.8). It is licensed under
+Statically linked into the plugin DLL (built through vcpkg, port `libmariadb` 3.4.11). It is licensed under
 the GNU Lesser General Public License version 2.1; the full license text is in `LICENSE-LGPL-2.1.txt`,
 which accompanies this file in the repository and in every release.
 
 - Source code of this version of the library: https://github.com/mariadb-corporation/mariadb-connector-c
-  (tag `v3.4.8`), as built by the vcpkg `libmariadb` port.
+  (tag `v3.4.11`), as built by the vcpkg `libmariadb` port.
 - To use a modified version of the library, rebuild the plugin from this repository's source: the
   complete source and Visual Studio project files are published here, and the library version is
   pinned through `vcpkg.json` (`builtin-baseline`). Point the build at your modified library and relink.
 
-## zlib 1.3.1
+## zlib 1.3.2
 
 https://zlib.net
 
@@ -59,7 +59,7 @@ Statically linked as a dependency of libmariadb.
 ```
 Copyright notice:
 
- (C) 1995-2022 Jean-loup Gailly and Mark Adler
+ (C) 1995-2026 Jean-loup Gailly and Mark Adler
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
